@@ -302,7 +302,10 @@ void pc_keybindings_save(void) {
 
 void pc_keybindings_load(void) {
     pc_keybindings_reset_defaults();
-
+#ifdef TARGET_ANDROID
+    /* No keyboard on Android — use defaults, gamepad handled by SDL2 */
+    return;
+#endif
     FILE* f = fopen(KEYBINDINGS_FILE, "r");
     if (!f) {
         pc_keybindings_save();

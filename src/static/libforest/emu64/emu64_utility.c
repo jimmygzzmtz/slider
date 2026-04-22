@@ -3,6 +3,9 @@
 #include "boot.h"
 #include "terminal.h"
 #include "MSL_C/w_math.h"
+#ifdef TARGET_PC
+#include "pc_vmem.h"
+#endif
 
 #ifdef TARGET_PC
 static_assert(sizeof(void*) == sizeof(u32), "seg2k0 pointer resolution requires 32-bit pointers");
@@ -11,6 +14,32 @@ static_assert(sizeof(void*) == sizeof(u32), "seg2k0 pointer resolution requires 
 extern "C" unsigned int pc_image_base;
 extern "C" unsigned int pc_image_end;
 extern "C" uintptr_t pc_gbi_unpack_runtime_ptr(unsigned int packed);
+
+/* Arena range from pc_os.c — heap pointers in arena also bypass segment resolution */
+extern "C" unsigned char* pc_arena_base;
+extern "C" unsigned char* pc_arena_end;
+
+/* Page-granularity cache for VirtualQuery results.
+ * Avoids repeated syscalls for addresses in the same page. */
+#define SEG2K0_PAGE_CACHE_SIZE 32
+static struct { u32 page; u8 committed; } seg2k0_page_cache[SEG2K0_PAGE_CACHE_SIZE];
+static int seg2k0_cache_next = 0;
+
+static int seg2k0_is_committed(u32 addr) {
+    u32 page = addr & ~0xFFF;
+    /* Check cache first */
+    for (int i = 0; i < SEG2K0_PAGE_CACHE_SIZE; i++) {
+        if (seg2k0_page_cache[i].page == page) {
+            return seg2k0_page_cache[i].committed;
+        }
+    }
+    /* Cache miss — query the OS via platform shim */
+    int committed = pc_vmem_is_page_committed(addr);
+    seg2k0_page_cache[seg2k0_cache_next].page = page;
+    seg2k0_page_cache[seg2k0_cache_next].committed = committed;
+    seg2k0_cache_next = (seg2k0_cache_next + 1) % SEG2K0_PAGE_CACHE_SIZE;
+    return committed;
+}
 
 u32 emu64::seg2k0(u32 segadr) {
     uintptr_t odd_ptr = pc_gbi_unpack_runtime_ptr(segadr);
