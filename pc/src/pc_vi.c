@@ -1,6 +1,9 @@
 /* pc_vi.c - video interface → SDL window swap + frame pacing */
 #include "pc_platform.h"
 #include "pc_profiler.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #define VI_TVMODE_NTSC_INT    0
 #define VI_TVMODE_NTSC_DS     1
@@ -95,13 +98,32 @@ void VIWaitForRetrace(void) {
         }
 
         if (pace_frame) {
+#ifdef __EMSCRIPTEN__
+            /* Emscripten: yield to the browser via Asyncify so rAF can paint.
+             * Audio is also pumped here since there's no producer thread. */
+            extern void pc_audio_pump_if_needed(void);
+            pc_audio_pump_if_needed();
+            if (g_frame_limiter != 0) {
+                int remain_ms = 0;
+                if (frame_start_time) {
+                    Uint64 now = SDL_GetPerformanceCounter();
+                    Uint64 elapsed_us = (now - frame_start_time) * 1000000 / perf_freq;
+                    if (elapsed_us < (Uint64)pace_us) {
+                        remain_ms = (int)((Uint64)pace_us - elapsed_us) / 1000;
+                        if (remain_ms < 1) remain_ms = 1;
+                    }
+                }
+                emscripten_sleep(remain_ms);
+            } else {
+                emscripten_sleep(0);
+            }
+#else
             /* Timer-based pacing: sleep until 16ms per frame (~60 FPS).
              * Audio production runs on a dedicated thread and is no longer
              * tied to game frame timing. */
             if (frame_start_time) {
                 Uint64 now = SDL_GetPerformanceCounter();
                 Uint64 elapsed_us = (now - frame_start_time) * 1000000 / perf_freq;
-                /* Spin for sub-ms precision. */
                 while (elapsed_us < (Uint64)pace_us) {
                     Uint64 remain_us = (Uint64)pace_us - elapsed_us;
                     if (remain_us > 2000) {
@@ -111,6 +133,7 @@ void VIWaitForRetrace(void) {
                     elapsed_us = (now - frame_start_time) * 1000000 / perf_freq;
                 }
             }
+#endif
         }
     }
     pc_profiler_add_time(PC_PROF_TIMER_PACE, t_before_pace_prof);

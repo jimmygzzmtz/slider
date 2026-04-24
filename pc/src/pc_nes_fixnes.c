@@ -410,8 +410,8 @@ void pc_fixnes_render_frame(uint16_t *fb) {
      * (R in low bits). Skip top 8 rows (often garbage), show 224 lines. */
     glBindTexture(GL_TEXTURE_2D, fixnes_texture);
     if (g_pc_profile_enabled) pc_profiler_add_count_texture_bind_slow();
-#ifdef TARGET_ANDROID
-    /* GLES 3.0 lacks GL_UNSIGNED_SHORT_5_6_5_REV — byte-swap to standard order */
+#if defined(TARGET_ANDROID) || defined(__EMSCRIPTEN__)
+    /* GLES 3.0 / WebGL2 lack GL_UNSIGNED_SHORT_5_6_5_REV — byte-swap to standard order */
     {
         static uint16_t swapped[256 * 224];
         uint16_t *src = fb + 256 * 8;

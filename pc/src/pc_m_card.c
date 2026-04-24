@@ -31,6 +31,16 @@
 #include "m_home.h"
 #include "lb_rtc.h"
 #include "game.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+/* Flush IDBFS to IndexedDB so saves survive page reloads. Called after
+ * successful atomic GCI writes. */
+static void pc_web_sync_save(void) {
+    EM_ASM({ if (typeof FS !== 'undefined' && FS.syncfs) FS.syncfs(false, function(){}); });
+}
+#else
+static void pc_web_sync_save(void) {}
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -479,6 +489,7 @@ static int pc_save_write_gci_to(const char* gci_path, const char* tmp_path) {
     }
 
     OSReport("[PC] GCI save: written successfully to %s (backups rotated)\n", gci_path);
+    pc_web_sync_save();
     return TRUE;
 }
 
