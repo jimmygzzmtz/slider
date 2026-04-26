@@ -234,7 +234,37 @@ void LCDisable(void) {}
 /* --- Init --- */
 void OSInit(void) {
     if (!arena_memory) {
+        /* On native PC, prefer a high address allocation to avoid clashing with
+         * the GameCube segment addresses used by seg2k0. On Emscripten, keep the
+         * allocator in the normal wasm heap because a fixed-address mmap can force
+         * a huge linear-memory growth and OOM the browser tab. */
+#ifndef __EMSCRIPTEN__
+        {
+            u32 base;
+            for (base = 0x10000000; base <= 0x50000000; base += 0x01000000) {
+#ifdef _WIN32
+                arena_memory = (u8*)VirtualAlloc((void*)(uintptr_t)base,
+                    PC_MAIN_MEMORY_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+                #ifndef MAP_FIXED_NOREPLACE
+                #define MAP_FIXED_NOREPLACE 0x100000
+                #endif
+                arena_memory = (u8*)mmap((void*)(uintptr_t)base, PC_MAIN_MEMORY_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED_NOREPLACE, -1, 0);
+                if (arena_memory == MAP_FAILED) arena_memory = NULL;
+#endif
+                if (arena_memory) break;
+            }
+        }
+        if (!arena_memory) {
+            fprintf(stderr, "[PC] WARNING: VirtualAlloc at high address failed, "
+                            "falling back to malloc (seg2k0 may misfire)\n");
+            arena_memory = (u8*)malloc(PC_MAIN_MEMORY_SIZE);
+        }
+#else
         arena_memory = (u8*)malloc(PC_MAIN_MEMORY_SIZE);
+#endif
         if (!arena_memory) {
             fprintf(stderr, "Failed to allocate main memory arena\n");
             exit(1);
