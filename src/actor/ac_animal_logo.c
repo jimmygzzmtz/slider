@@ -21,7 +21,16 @@
 #include "m_font.h"
 #include "libultra/libultra.h"
 #include "m_flashrom.h"
-#ifdef PC_ENHANCEMENTS
+
+/* The PC port adds a "Start Game / Options" menu to the title screen. The
+ * options it exposes (resolution, fullscreen mode, VSync, MSAA, texture
+ * preload) are all browser-controlled or no-ops on the web build, so revert
+ * to the original "press START → start game" flow there. */
+#if defined(PC_ENHANCEMENTS) && !defined(__EMSCRIPTEN__)
+#define PC_TITLE_MENU 1
+#endif
+
+#ifdef PC_TITLE_MENU
 #include "pc_settings.h"
 #include "pc_settings_menu.h"
 #include "pc_menu_util.h"
@@ -341,7 +350,7 @@ static void aAL_fade_out_start_wait_init(ANIMAL_LOGO_ACTOR* actor, GAME* game) {
   actor->press_start_opacity = 255.0f;
 }
 
-#ifdef PC_ENHANCEMENTS
+#ifdef PC_TITLE_MENU
 static void aAL_pc_game_start_wait(ANIMAL_LOGO_ACTOR* actor, GAME* game) {
   GAME_PLAY* play = (GAME_PLAY*)game;
   f32 dt = (f32)game->graph->dt_num_60fps_frames;
@@ -449,7 +458,7 @@ static void aAL_setupAction(ANIMAL_LOGO_ACTOR* actor, GAME* game, int action) {
     &aAL_logo_in,
     &aAL_back_fadein,
     &aAL_start_key_chk_start_wait,
-#ifdef PC_ENHANCEMENTS
+#ifdef PC_TITLE_MENU
     &aAL_pc_game_start_wait,
 #else
     &aAL_game_start_wait,
@@ -779,7 +788,144 @@ static void aAL_title_draw(GAME* game, ANIMAL_LOGO_ACTOR* actor) {
   Matrix_pull();
 }
 
-#ifdef PC_ENHANCEMENTS
+#ifdef PC_TITLE_MENU
+/* Shared cursor glyph used by both the main title menu and the options overlay. */
+static u8 str_arrow[] = ">";
+
+static void aAL_pc_options_draw(ANIMAL_LOGO_ACTOR* actor, GAME* game) {
+  GRAPH* graph = game->graph;
+  char buf[48];
+  int len;
+  f32 x = 80.0f;
+  f32 y = 68.0f;
+  f32 line_h = 16.0f;
+
+  /* Semi-transparent background behind options panel */
+  {
+    Gfx* gfx;
+    int x0 = 45, y0_bg = 58, x1 = 295, y1_bg = 196;
+    OPEN_DISP(graph);
+    gfx = NOW_FONT_DISP;
+    gDPPipeSync(gfx++);
+    gDPSetOtherMode(gfx++,
+      G_AD_DISABLE | G_CD_MAGICSQ | G_CK_NONE | G_TC_FILT |
+      G_TF_POINT | G_TT_NONE | G_TL_TILE | G_TD_CLAMP |
+      G_TP_NONE | G_CYC_1CYCLE | G_PM_NPRIMITIVE,
+      G_AC_NONE | G_ZS_PRIM | G_RM_XLU_SURF | G_RM_XLU_SURF2);
+    gDPSetCombineMode(gfx++, G_CC_PRIMITIVE, G_CC_PRIMITIVE);
+    gDPSetPrimColor(gfx++, 0, 0, 0, 0, 0, 160);
+    gfx = gfx_gSPTextureRectangle1(gfx,
+      x0 << 2, y0_bg << 2, x1 << 2, y1_bg << 2,
+      0, 0, 0, 0, 0);
+    gDPPipeSync(gfx++);
+    SET_FONT_DISP(gfx);
+    CLOSE_DISP(graph);
+  }
+
+  int sel = actor->pc_options_sel;
+  int item = 0;
+
+  /* Title */
+  {
+    static u8 str_title[] = "- Options -";
+    f32 tw = (f32)mFont_GetStringWidth(str_title, sizeof(str_title) - 1, TRUE);
+    mFont_SetLineStrings(game, str_title, sizeof(str_title) - 1,
+      (SCREEN_WIDTH_F - tw) * 0.5f, y,
+      255, 255, 255, 255, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  }
+  y += line_h * 1.2f;
+
+  /* Resolution */
+  len = sprintf(buf, "< %dx%d >", g_pc_settings.window_width, g_pc_settings.window_height);
+  {
+    static u8 lbl[] = "Resolution";
+    mFont_SetLineStrings(game, lbl, sizeof(lbl) - 1, x, y,
+      sel == item ? 255 : 180, sel == item ? 255 : 180, sel == item ? 255 : 180,
+      sel == item ? 255 : 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  }
+  mFont_SetLineStrings(game, (u8*)buf, len, 180.0f, y,
+    sel == item ? 255 : 180, sel == item ? 255 : 180, sel == item ? 255 : 180,
+    sel == item ? 255 : 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  if (sel == item) mFont_SetLineStrings(game, str_arrow, 1, x - 12.0f, y, 255, 255, 255, 255, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  item++; y += line_h;
+
+  /* Fullscreen */
+  {
+    const char* fs = g_pc_settings.fullscreen == 0 ? "< Windowed >" :
+                     g_pc_settings.fullscreen == 1 ? "< Fullscreen >" : "< Borderless >";
+    len = sprintf(buf, "%s", fs);
+  }
+  {
+    static u8 lbl[] = "Display";
+    mFont_SetLineStrings(game, lbl, sizeof(lbl) - 1, x, y,
+      sel == item ? 255 : 180, sel == item ? 255 : 180, sel == item ? 255 : 180,
+      sel == item ? 255 : 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  }
+  mFont_SetLineStrings(game, (u8*)buf, len, 180.0f, y,
+    sel == item ? 255 : 180, sel == item ? 255 : 180, sel == item ? 255 : 180,
+    sel == item ? 255 : 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  if (sel == item) mFont_SetLineStrings(game, str_arrow, 1, x - 12.0f, y, 255, 255, 255, 255, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  item++; y += line_h;
+
+  /* VSync */
+  len = sprintf(buf, "< %s >", g_pc_settings.vsync ? "On" : "Off");
+  {
+    static u8 lbl[] = "VSync";
+    mFont_SetLineStrings(game, lbl, sizeof(lbl) - 1, x, y,
+      sel == item ? 255 : 180, sel == item ? 255 : 180, sel == item ? 255 : 180,
+      sel == item ? 255 : 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  }
+  mFont_SetLineStrings(game, (u8*)buf, len, 180.0f, y,
+    sel == item ? 255 : 180, sel == item ? 255 : 180, sel == item ? 255 : 180,
+    sel == item ? 255 : 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  if (sel == item) mFont_SetLineStrings(game, str_arrow, 1, x - 12.0f, y, 255, 255, 255, 255, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  item++; y += line_h;
+
+  /* MSAA */
+  if (g_pc_settings.msaa > 0)
+    len = sprintf(buf, "< %dx >", g_pc_settings.msaa);
+  else
+    len = sprintf(buf, "< Off >");
+  {
+    static u8 lbl[] = "MSAA";
+    mFont_SetLineStrings(game, lbl, sizeof(lbl) - 1, x, y,
+      sel == item ? 255 : 180, sel == item ? 255 : 180, sel == item ? 255 : 180,
+      sel == item ? 255 : 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  }
+  mFont_SetLineStrings(game, (u8*)buf, len, 180.0f, y,
+    sel == item ? 255 : 180, sel == item ? 255 : 180, sel == item ? 255 : 180,
+    sel == item ? 255 : 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  if (sel == item) mFont_SetLineStrings(game, str_arrow, 1, x - 12.0f, y, 255, 255, 255, 255, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  item++; y += line_h;
+
+  /* Textures */
+  {
+    const char* tp = g_pc_settings.preload_textures == 0 ? "< On Demand >" :
+                     g_pc_settings.preload_textures == 1 ? "< Preload >" : "< Preload&Cache >";
+    len = sprintf(buf, "%s", tp);
+  }
+  {
+    static u8 lbl[] = "Textures";
+    mFont_SetLineStrings(game, lbl, sizeof(lbl) - 1, x, y,
+      sel == item ? 255 : 180, sel == item ? 255 : 180, sel == item ? 255 : 180,
+      sel == item ? 255 : 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  }
+  mFont_SetLineStrings(game, (u8*)buf, len, 180.0f, y,
+    sel == item ? 255 : 180, sel == item ? 255 : 180, sel == item ? 255 : 180,
+    sel == item ? 255 : 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  if (sel == item) mFont_SetLineStrings(game, str_arrow, 1, x - 12.0f, y, 255, 255, 255, 255, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  y += line_h * 1.5f;
+
+  /* Hints */
+  {
+    static u8 str_save[] = "START: Save";
+    static u8 str_back[] = "B: Back";
+    mFont_SetLineStrings(game, str_save, sizeof(str_save) - 1, x, y, 255, 255, 255, 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+    mFont_SetLineStrings(game, str_back, sizeof(str_back) - 1, 190.0f, y, 255, 255, 255, 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
+  }
+}
+#endif
+
 static void aAL_pc_menu_draw(ANIMAL_LOGO_ACTOR* actor, GAME* game) {
   GRAPH* graph = game->graph;
   int td = actor->titledemo_no;
@@ -880,7 +1026,7 @@ static void aAL_actor_draw(ACTOR* actor, GAME* game) {
       case aAL_ACTION_GAME_START:
       case aAL_ACTION_FADE_OUT_START:
       case aAL_ACTION_OUT:
-#ifdef PC_ENHANCEMENTS
+#ifdef PC_TITLE_MENU
         { extern int g_pc_title_main_menu_visible;
           g_pc_title_main_menu_visible = 1; }
         aAL_pc_menu_draw(logo_actor, game);
