@@ -12,9 +12,9 @@ extern "C" {
 #define WEATHER_PRV_NO_EXIST_ID -1
 #define WEATHER_PRV_HOLD_TIMER -100
 
-extern int aWeather_ChangingWeather();
-extern void aWeather_RequestChangeWeatherToIsland();
-extern void aWeather_RequestChangeWeatherFromIsland();
+extern int aWeather_ChangingWeather(void);
+extern void aWeather_RequestChangeWeatherToIsland(void);
+extern void aWeather_RequestChangeWeatherFromIsland(void);
 extern int aWeather_ShouldSpawnEvery(ACTOR* actorx, f32 period_frames);
 
 extern ACTOR_PROFILE Weather_Profile;
