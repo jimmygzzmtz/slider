@@ -103,7 +103,7 @@ void VIWaitForRetrace(void) {
              * Audio is also pumped here since there's no producer thread. */
             extern void pc_audio_pump_if_needed(void);
             pc_audio_pump_if_needed();
-            if (g_frame_limiter != 0) {
+            if (!g_pc_no_framelimit) {
                 int remain_ms = 0;
                 if (frame_start_time) {
                     Uint64 now = SDL_GetPerformanceCounter();
@@ -113,24 +113,29 @@ void VIWaitForRetrace(void) {
                         if (remain_ms < 1) remain_ms = 1;
                     }
                 }
+                /* Floor: yield at least 4 ms so iOS Safari has breathing room
+                 * for raster/compositing without overly expensive spin loops. */
+                if (remain_ms < 4) remain_ms = 4;
                 emscripten_sleep(remain_ms);
             } else {
-                emscripten_sleep(0);
+                emscripten_sleep(4); /* minimum yield so the browser can repaint */
             }
 #else
-            /* Timer-based pacing: sleep until 16ms per frame (~60 FPS).
-             * Audio production runs on a dedicated thread and is no longer
-             * tied to game frame timing. */
-            if (frame_start_time) {
-                Uint64 now = SDL_GetPerformanceCounter();
-                Uint64 elapsed_us = (now - frame_start_time) * 1000000 / perf_freq;
-                while (elapsed_us < (Uint64)pace_us) {
-                    Uint64 remain_us = (Uint64)pace_us - elapsed_us;
-                    if (remain_us > 2000) {
-                        SDL_Delay(1);
+            if (!g_pc_no_framelimit) {
+                /* Timer-based pacing: sleep until the configured frame budget.
+                 * Audio production runs on a dedicated thread and is no longer
+                 * tied to game frame timing. */
+                if (frame_start_time) {
+                    Uint64 now = SDL_GetPerformanceCounter();
+                    Uint64 elapsed_us = (now - frame_start_time) * 1000000 / perf_freq;
+                    while (elapsed_us < (Uint64)pace_us) {
+                        Uint64 remain_us = (Uint64)pace_us - elapsed_us;
+                        if (remain_us > 2000) {
+                            SDL_Delay(1);
+                        }
+                        now = SDL_GetPerformanceCounter();
+                        elapsed_us = (now - frame_start_time) * 1000000 / perf_freq;
                     }
-                    now = SDL_GetPerformanceCounter();
-                    elapsed_us = (now - frame_start_time) * 1000000 / perf_freq;
                 }
             }
 #endif
