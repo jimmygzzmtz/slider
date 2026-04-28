@@ -8,6 +8,25 @@ static u8* arena_memory = NULL;
 static u8* arena_lo = NULL;
 static u8* arena_hi = NULL;
 
+#ifdef __EMSCRIPTEN__
+/* On Emscripten, dlmalloc returns a session-dependent address; some sessions
+ * land inside emu64::seg2k0's N64-segment-collision range (0x03000000–
+ * 0x0FFFFFFF) and produce intermittent JKRHeap::alloc OOBs. mmap with
+ * MAP_FIXED at a high address isn't honored by emscripten's mmap.
+ *
+ * Static-allocate the arena instead. The linker places it in the wasm
+ * linear-memory static-data region (well below 0x03000000 given typical
+ * static-data sizes), so its address is fixed and below the collision
+ * zone every load. Zero-init is free — wasm linear memory starts zeroed.
+ *
+ * Adds 24 MB to the wasm module's required startup memory (BSS), which
+ * is already comfortably within INITIAL_MEMORY. */
+static u8 arena_memory_static[PC_MAIN_MEMORY_SIZE] __attribute__((aligned(32)));
+#endif
+
+/* Exported for seg2k0 collision avoidance */
+u8* pc_arena_base = NULL;
+u8* pc_arena_end  = NULL;
 void* OSGetArenaLo(void) { return arena_lo; }
 void* OSGetArenaHi(void) { return arena_hi; }
 void  OSSetArenaLo(void* lo) { arena_lo = (u8*)lo; }
@@ -234,11 +253,14 @@ void LCDisable(void) {}
 /* --- Init --- */
 void OSInit(void) {
     if (!arena_memory) {
+#ifdef __EMSCRIPTEN__
+        /* Static BSS array — linker-fixed address in the static data region
+         * (always below the N64 segment collision range), no allocation can fail,
+         * and it avoids the browser heap growth that can trigger OOMs. */
+        arena_memory = arena_memory_static;
+#else
         /* On native PC, prefer a high address allocation to avoid clashing with
-         * the GameCube segment addresses used by seg2k0. On Emscripten, keep the
-         * allocator in the normal wasm heap because a fixed-address mmap can force
-         * a huge linear-memory growth and OOM the browser tab. */
-#ifndef __EMSCRIPTEN__
+         * the GameCube segment addresses used by seg2k0. */
         {
             u32 base;
             for (base = 0x10000000; base <= 0x50000000; base += 0x01000000) {
@@ -262,8 +284,6 @@ void OSInit(void) {
                             "falling back to malloc (seg2k0 may misfire)\n");
             arena_memory = (u8*)malloc(PC_MAIN_MEMORY_SIZE);
         }
-#else
-        arena_memory = (u8*)malloc(PC_MAIN_MEMORY_SIZE);
 #endif
         if (!arena_memory) {
             fprintf(stderr, "Failed to allocate main memory arena\n");
@@ -274,6 +294,8 @@ void OSInit(void) {
         /* GC system info at phys addr 0; offset 0x28 = mem size for JKRHeap */
         *(u32*)(arena_memory + 0x28) = PC_MAIN_MEMORY_SIZE;
 
+        pc_arena_base = arena_memory;
+        pc_arena_end = arena_memory + PC_MAIN_MEMORY_SIZE;
         arena_lo = arena_memory + 0x3100;
         arena_hi = arena_memory + PC_MAIN_MEMORY_SIZE;
     }
