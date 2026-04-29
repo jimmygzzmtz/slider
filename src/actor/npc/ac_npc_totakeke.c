@@ -11,7 +11,7 @@
 #include "m_ledit_ovl.h"
 
 #ifdef TARGET_PC
-static void aNTT_schedule_proc(NPC_TOTAKEKE_ACTOR* totakeke, GAME_PLAY* play, int schedule_id);
+static void aNTT_schedule_proc(NPC_ACTOR* actorx, GAME_PLAY* play, int schedule_id);
 static int aNTT_change_talk_proc(NPC_TOTAKEKE_ACTOR*, int);
 static void aNTT_setup_think_proc(NPC_TOTAKEKE_ACTOR*, GAME_PLAY*, u8);
 static int aNTT_enso_init(NPC_TOTAKEKE_ACTOR*);
@@ -88,7 +88,7 @@ static void aNTT_actor_ct(ACTOR *actorx, GAME *game) {
         xyz_t wpos;
         NPC_TOTAKEKE_ACTOR *totakeke = (NPC_TOTAKEKE_ACTOR *)actorx;
 
-        totakeke->npc_class.schedule.schedule_proc = (aNPC_SCHEDULE_PROC)aNTT_schedule_proc;
+        totakeke->npc_class.schedule.schedule_proc = aNTT_schedule_proc;
 #ifdef TARGET_PC
         /* Staff-roll state is authored in integer 60 Hz ticks. */
         totakeke->staffroll_logic_accum = 0.0f;
