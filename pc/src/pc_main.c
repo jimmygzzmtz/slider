@@ -160,6 +160,7 @@ static void pc_web_mount_saves(void) {
         FS.syncfs(true, function(err) {
             if (err) console.warn('IDBFS load err:', err);
             Module.__save_ready = 1;
+            if (typeof window._onSaveReady === 'function') window._onSaveReady();
         });
     });
     while (!EM_ASM_INT({ return Module.__save_ready ? 1 : 0; })) {
@@ -176,6 +177,7 @@ static void pc_web_mount_rom(void) {
         FS.syncfs(true, function(err) {
             if (err) console.warn('IDBFS /orig load err:', err);
             Module.__rom_ready = 1;
+            if (typeof window._onRomReady === 'function') window._onRomReady();
         });
     });
     while (!EM_ASM_INT({ return Module.__rom_ready ? 1 : 0; })) {
@@ -603,14 +605,23 @@ int main(int argc, char* argv[]) {
     pc_keybindings_load();
     pc_platform_init();
 
-    if (!pc_disc_init()) {
 #ifdef __EMSCRIPTEN__
-        /* No disc found in /orig (or anywhere else searched). Prompt the
-         * user to upload one, then retry. The prompt blocks until a valid
-         * GC disc image lands in /orig and is persisted to IndexedDB. */
-        pc_web_prompt_for_rom();
-        pc_disc_init();
+    /* Always show the ROM picker on web boot — it doubles as the
+     * "ready to play" confirm screen, displaying the loaded ROM and save
+     * card status before play. The user clicks Start to proceed. */
+    pc_web_prompt_for_rom();
 #endif
+
+    if (!pc_disc_init()) {
+        const char* msg =
+            "No game data found.\n\n"
+            "Animal Crossing needs the original GameCube ROM to run.\n"
+            "Place a disc image (.iso, .gcm, or .ciso) in the \"rom\" folder or upload one in the web picker.";
+        fprintf(stderr, "[PC] %s\n", msg);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+                                 "Animal Crossing - Missing ROM", msg, g_pc_window);
+        pc_platform_shutdown();
+        return 1;
     }
 
     if (!pc_assets_init()) {
