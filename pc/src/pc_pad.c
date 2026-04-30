@@ -5,6 +5,10 @@
 #include "pc_settings.h"
 #include <dolphin/pad.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 /* analog stick constants */
 #define STICK_MAGNITUDE     80
 #define RUMBLE_DURATION_MS  200
@@ -13,31 +17,77 @@ static SDL_GameController* g_controller = NULL;
 
 /* deadzone percent (0-40) -> raw SDL axis threshold */
 static int deadzone_threshold(int percent) {
-    if (percent < 0)  percent = 0;
-    if (percent > 90) percent = 90;
+    if (percent < 0) {
+        percent = 0;
+    }
+    if (percent > 90) {
+        percent = 90;
+    }
     return percent * 32767 / 100;
 }
 
 /* is a remappable pad binding currently held? */
 static int pad_code_pressed(PCPadCode code) {
-    if (code < 0) return 0;
+    if (code < 0) {
+        return 0;
+    }
     if (code & PC_PAD_AXIS_BIT) {
-        return SDL_GameControllerGetAxis(g_controller,
-            (SDL_GameControllerAxis)(code & 0xFF)) > PC_PAD_AXIS_PRESS;
+        return SDL_GameControllerGetAxis(g_controller, (SDL_GameControllerAxis)(code & 0xFF)) > PC_PAD_AXIS_PRESS;
     }
     return SDL_GameControllerGetButton(g_controller, (SDL_GameControllerButton)code);
 }
 
 /* analog trigger value for the L/R binding (digital bindings read as full press) */
 static u8 pad_trigger_value(PCPadCode code) {
-    if (code < 0) return 0;
+    if (code < 0) {
+        return 0;
+    }
     if (code & PC_PAD_AXIS_BIT) {
         s16 v = SDL_GameControllerGetAxis(g_controller, (SDL_GameControllerAxis)(code & 0xFF));
-        if (v < 0) v = 0;
+        if (v < 0) {
+            v = 0;
+        }
         return (u8)(v >> 7);
     }
     return SDL_GameControllerGetButton(g_controller, (SDL_GameControllerButton)code) ? 255 : 0;
 }
+
+#ifdef __EMSCRIPTEN__
+/* Touch-overlay input state, written from shell.html's gamepad UI via the
+ * exported bridge functions below. Merged into PADRead alongside keyboard
+ * and SDL gamepad sources, so a paired Bluetooth controller and the on-
+ * screen pad can coexist. */
+static u16 g_touch_buttons = 0;
+static s8 g_touch_stick_x = 0;
+static s8 g_touch_stick_y = 0;
+
+EMSCRIPTEN_KEEPALIVE
+void pc_input_touch_button(int gc_button_mask, int pressed) {
+    if (pressed) {
+        g_touch_buttons |= (u16)gc_button_mask;
+    } else {
+        g_touch_buttons &= (u16)~gc_button_mask;
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void pc_input_touch_stick(int x, int y) {
+    if (x > 127) {
+        x = 127;
+    }
+    if (x < -128) {
+        x = -128;
+    }
+    if (y > 127) {
+        y = 127;
+    }
+    if (y < -128) {
+        y = -128;
+    }
+    g_touch_stick_x = (s8)x;
+    g_touch_stick_y = (s8)y;
+}
+#endif
 
 BOOL PADInit(void) {
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
@@ -163,6 +213,16 @@ u32 PADRead(PADStatus* status) {
         status[0].triggerLeft  = pad_trigger_value(pb->l);
         status[0].triggerRight = pad_trigger_value(pb->r);
     }
+
+#ifdef __EMSCRIPTEN__
+    /* Touch overlay merges in last so the on-screen pad can drive any
+     * input the keyboard/gamepad sources didn't already set. Stick is
+     * additive: only override the merged stick if the touch UI is
+     * actively reporting a non-neutral value. */
+    buttons |= g_touch_buttons;
+    if (g_touch_stick_x != 0) stickX = g_touch_stick_x;
+    if (g_touch_stick_y != 0) stickY = g_touch_stick_y;
+#endif
 
     status[0].button = buttons;
     status[0].stickX = stickX;
