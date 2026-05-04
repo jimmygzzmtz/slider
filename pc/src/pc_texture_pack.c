@@ -822,7 +822,7 @@ static int preload_from_cache(int expected_count) {
 #ifndef __EMSCRIPTEN__
         if (g_pc_window && (i % 500) == 0) {
             char title[128];
-            snprintf(title, sizeof(title), "Animal Crossing - Loading textures... %d/%d (%d%%)",
+            snprintf(title, sizeof(title), PC_WINDOW_TITLE " - Loading textures... %d/%d (%d%%)",
                      i, entry_count, i * 100 / entry_count);
             SDL_SetWindowTitle(g_pc_window, title);
             SDL_PumpEvents();
@@ -834,7 +834,7 @@ static int preload_from_cache(int expected_count) {
     fclose(f);
 
 #ifndef __EMSCRIPTEN__
-    if (g_pc_window) SDL_SetWindowTitle(g_pc_window, "Animal Crossing");
+    if (g_pc_window) SDL_SetWindowTitle(g_pc_window, PC_WINDOW_TITLE);
 #endif
 
     printf("[TexturePack] Loaded %d textures from cache\n", loaded);
@@ -1026,7 +1026,7 @@ void pc_texture_pack_preload_all(void) {
 #ifndef __EMSCRIPTEN__
         if (g_pc_window && (processed % 100) == 0) {
             char title[128];
-            snprintf(title, sizeof(title), "Animal Crossing - Building texture cache... %d/%d (%d%%)",
+            snprintf(title, sizeof(title), PC_WINDOW_TITLE " - Building texture cache... %d/%d (%d%%)",
                      processed, total, processed * 100 / total);
             SDL_SetWindowTitle(g_pc_window, title);
             SDL_PumpEvents();
@@ -1086,7 +1086,7 @@ void pc_texture_pack_preload_all(void) {
 #ifndef __EMSCRIPTEN__
         if (g_pc_window && (processed % 100) == 0) {
             char title[128];
-            snprintf(title, sizeof(title), "Animal Crossing - Building texture cache... %d/%d (%d%%)",
+            snprintf(title, sizeof(title), PC_WINDOW_TITLE " - Building texture cache... %d/%d (%d%%)",
                      processed, total, processed * 100 / total);
             SDL_SetWindowTitle(g_pc_window, title);
             SDL_PumpEvents();
@@ -1104,7 +1104,7 @@ void pc_texture_pack_preload_all(void) {
     }
 
 #ifndef __EMSCRIPTEN__
-    if (g_pc_window) SDL_SetWindowTitle(g_pc_window, "Animal Crossing");
+    if (g_pc_window) SDL_SetWindowTitle(g_pc_window, PC_WINDOW_TITLE);
 #endif
 
     Uint64 t_end = SDL_GetPerformanceCounter();

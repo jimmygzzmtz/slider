@@ -354,6 +354,22 @@ void pc_platform_swap_buffers(void) {
     SDL_GL_SwapWindow(g_pc_window);
 }
 
+static int pc_confirm_quit(void) {
+    const SDL_MessageBoxButtonData buttons[] = {
+        { SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel" },
+        { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Quit" },
+    };
+    const SDL_MessageBoxData data = {
+        SDL_MESSAGEBOX_INFORMATION, g_pc_window,
+        PC_WINDOW_TITLE, "Are you sure you want to quit?",
+        2, buttons, NULL
+    };
+    int button = 0;
+    if (SDL_ShowMessageBox(&data, &button) < 0) {
+        return 1; /* on error, just quit */
+    }
+    return button == 1;
+}
 int pc_platform_poll_events(void) {
     SDL_Event event;
 
