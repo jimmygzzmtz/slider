@@ -521,6 +521,7 @@ elseif(EMSCRIPTEN)
         "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.css"
         "${CMAKE_CURRENT_SOURCE_DIR}/web/shell-touch.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/web/shell-saves.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/shell-rom.js"
     )
     _pc_web_copy_each("${CMAKE_BINARY_DIR}/web/" ${_PWA_FILES})
 
@@ -545,6 +546,7 @@ elseif(EMSCRIPTEN)
         "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.css"
         "${CMAKE_CURRENT_SOURCE_DIR}/web/shell-touch.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/web/shell-saves.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/shell-rom.js"
         "${CMAKE_CURRENT_SOURCE_DIR}/web/manifest.webmanifest"
         ${_PWA_FONTS}
     )
