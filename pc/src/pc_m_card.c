@@ -902,14 +902,18 @@ int mCD_InitGameStart_bg(int player_no, int card_private_idx, int start_cond, s3
                                  Now_Private->reset_count);
                     }
                 }
-                /* Arm reset code: if player quits without saving, next load detects it */
+
+                /* Arm reset code: if player quits without saving, next load detects it.
+                 * Persist it immediately so the armed code survives the tab-closing case
+                 * that otherwise loses the previous GCI state before the next autosave.
+                 * This matches the GC save-start flow while preserving the Resetti trigger.
+                 */
                 pc_set_reset_code(Now_Private);
 
-                /* GC writes the save (armed code included) back to the card
-                 * here (bg_write_main/bg_write_bk). Persist to disk or the
-                 * armed code never survives a quit and Resetti can't trigger.
-                 * Cond 1 only - matches GC (new players aren't saved yet). */
-                if (start_cond == mCD_START_COND_1) {
+                /* GC writes the save (armed code included) back to the card here.
+                 * Keep the existing cond-1 write path and also persist when a loaded save
+                 * is already active so a quit before autosave does not clear the armed code. */
+                if (start_cond == mCD_START_COND_1 || pc_save_ready) {
                     u16 copy_protect = pc_get_land_copy_protect();
                     Common_Set(copy_protect, copy_protect);
                     Save_Set(copy_protect, copy_protect);
@@ -972,8 +976,13 @@ int mCD_SaveHome_bg(int param_1, int* chan) {
     int result;
 
 
+    /* Persist whatever reset_code is currently in memory. InitGameStart
+     * arms a non-zero reset_code at session start; every autosave below
+     * carries that value to the card. The web port has no explicit
+     * "Save & Quit" affordance — closing the tab is equivalent to a
+     * GameCube hard reset — so Resetti firing on every reload is the
+     * correct GC-equivalent behavior. */
     pc_save_pre_write_side_effects(param_1);
-
     if (slot == mCD_SLOT_B && l_card_b_gci_path[0] != '\0') {
         /* Visiting Card B's town — save to Card B GCI */
         char tmp_path[300];
