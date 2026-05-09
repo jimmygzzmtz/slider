@@ -976,13 +976,15 @@ int mCD_SaveHome_bg(int param_1, int* chan) {
     int result;
 
 
-    /* Persist whatever reset_code is currently in memory. InitGameStart
-     * arms a non-zero reset_code at session start; every autosave below
-     * carries that value to the card. The web port has no explicit
-     * "Save & Quit" affordance — closing the tab is equivalent to a
-     * GameCube hard reset — so Resetti firing on every reload is the
-     * correct GC-equivalent behavior. */
+    /* Persist the in-memory save state and clear the armed reset code on a
+     * real save. This matches the GameCube flow for Save & Quit/Save & Continue:
+     * the side-effects path keeps the reset detection semantics, while the actual
+     * save clears the armed reset flag so a normal save does not trigger Resetti
+     * on the next load. */
     pc_save_pre_write_side_effects(param_1);
+    if (Now_Private != NULL) {
+        Now_Private->reset_code = 0;
+    }
     if (slot == mCD_SLOT_B && l_card_b_gci_path[0] != '\0') {
         /* Visiting Card B's town — save to Card B GCI */
         char tmp_path[300];
