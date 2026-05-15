@@ -5,8 +5,10 @@ int g_pc_uber_shader_only = 0; /* --uber-shader: disable specialization */
 
 /* --- file I/O --- */
 
-static char* load_text_file(const char* path) {
-    /* Use SDL_RWFromFile so Android can read from APK assets transparently */
+/* Non-static so pc_postfx.c (and any future GL module) can reuse the
+ * same SDL_RWops-backed reader. Android needs SDL_RWFromFile to
+ * transparently read from APK assets; bare fopen would miss them. */
+char* pc_load_text_file(const char* path) {
     SDL_RWops* rw = SDL_RWFromFile(path, "rb");
     if (!rw) return NULL;
 
@@ -30,7 +32,7 @@ static char* load_text_file(const char* path) {
 static char* load_shader(const char* filename) {
     char path[512];
     snprintf(path, sizeof(path), "shaders/%s", filename);
-    char* src = load_text_file(path);
+    char* src = pc_load_text_file(path);
     if (src) {
         printf("[PC/TEV] Loaded shader: %s\n", path);
     } else {

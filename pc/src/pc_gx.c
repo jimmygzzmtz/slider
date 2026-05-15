@@ -1,6 +1,7 @@
 /* pc_gx.c - GX API → OpenGL 3.3: state management, vertex submission, draw dispatch */
 #include "pc_gx_internal.h"
 #include "pc_profiler.h"
+#include "pc_postfx.h"
 #include <stddef.h>
 static GLushort quad_index_buf[(PC_GX_MAX_VERTS / 4) * 6];
 #include <math.h>
@@ -362,6 +363,7 @@ void pc_gx_init(void) {
     pc_gx_tev_init();
     pc_gx_texture_init();
     pc_gx_texture_bind_cache_invalidate();
+    pc_postfx_init();
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
@@ -396,6 +398,10 @@ void pc_gx_begin_frame(void) {
     pc_gx_draw_call_count = 0;
     g_pc_widescreen_stretch = 0;
     pc_gx_draw_pending();
+    /* Redirect this frame's draws into the postfx FBO (web-only, no-op
+     * elsewhere or when filter mode is off/ascii). glClear below then
+     * hits the FBO instead of the default framebuffer. */
+    pc_postfx_begin_frame();
     /* glClear respects write masks — must enable all before clearing */
     glDepthMask(GL_TRUE);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -436,6 +442,7 @@ void pc_gx_restore_after_nes(void) {
 }
 
 void pc_gx_shutdown(void) {
+    pc_postfx_shutdown();
     pc_gx_tev_shutdown();
     pc_gx_texture_shutdown();
 #ifdef PC_ENHANCEMENTS
