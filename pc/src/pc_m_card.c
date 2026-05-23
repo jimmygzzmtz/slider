@@ -315,7 +315,10 @@ static void pc_set_reset_code(Private_c* priv) {
 }
 
 /* Money rock / Wisp / Copy Protect. save_mode mirrors GC SaveHome _04:
- * 0 = full save (clears reset code), nonzero = door save (keeps it armed) */
+ * 0 = full save (clears reset code), nonzero = door save (keeps it armed).
+ * Keep the upstream Wisp and money-rock cleanup, but preserve the browser
+ * branch's reset-code behavior so actual saves clear the armed code while
+ * door-saves still re-arm it for the next load. */
 static void pc_save_pre_write_side_effects(int save_mode) {
     Private_c* priv = Now_Private;
     u16 copy_protect;
@@ -974,7 +977,6 @@ void mCD_LoadLand(void) {
 int mCD_SaveHome_bg(int param_1, int* chan) {
     int slot = mCD_GetThisLandSlotNo();
     int result;
-
 
     /* Persist the in-memory save state and clear the armed reset code on a
      * real save. This matches the GameCube flow for Save & Quit/Save & Continue:
