@@ -924,7 +924,6 @@ static void aAL_pc_options_draw(ANIMAL_LOGO_ACTOR* actor, GAME* game) {
     mFont_SetLineStrings(game, str_back, sizeof(str_back) - 1, 190.0f, y, 255, 255, 255, 160, FALSE, TRUE, 1.0f, 1.0f, mFont_MODE_FONT);
   }
 }
-#endif
 
 static void aAL_pc_menu_draw(ANIMAL_LOGO_ACTOR* actor, GAME* game) {
   GRAPH* graph = game->graph;
