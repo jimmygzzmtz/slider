@@ -2,11 +2,10 @@ FROM emscripten/emsdk:4.0.3 AS builder
 
 WORKDIR /src
 
-# Keep the builder stage simple: Emscripten already includes the toolchain and
-# the standard build dependencies for a static WebGL2 bundle.
+# The project CMake entry point lives under pc/, not the repo root.
 COPY . .
 
-RUN emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release && \
+RUN emcmake cmake -S pc -B build-web -DCMAKE_BUILD_TYPE=Release && \
     cmake --build build-web --parallel
 
 FROM nginx:alpine

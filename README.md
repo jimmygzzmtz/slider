@@ -44,7 +44,7 @@ The container serves the generated output from the static web bundle at the root
 To build the browser bundle locally:
 
 ```bash
-emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+emcmake cmake -S pc -B build-web -DCMAKE_BUILD_TYPE=Release
 cmake --build build-web --parallel
 ```
 
