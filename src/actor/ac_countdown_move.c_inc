@@ -63,7 +63,7 @@ static void aCOU_move(STRUCTURE_ACTOR* actorx, GAME_PLAY* play) {
 static void aCOU_happy_new_year(STRUCTURE_ACTOR* actorx, GAME_PLAY* play) {
     COUNT_ACTOR* actor = (COUNT_ACTOR*)actorx;
     f32* accum = &actor->structure_class.arg3_f;
-    f32 dt = (f32)play->graph->dt_num_60fps_frames;
+    f32 dt = (f32)play->game.graph->dt_num_60fps_frames;
     int ticks;
     int i;
 
