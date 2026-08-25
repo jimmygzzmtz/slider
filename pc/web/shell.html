@@ -43,7 +43,7 @@
 </head>
 <body>
     <div id="container">
-        <canvas id="canvas" width="1280" height="720" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+        <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
         <!-- Post-process overlay used by shell-postfx.js (ASCII filter +
              CRT shader). Hidden by default; positioned absolutely on top
              of #canvas via shell.css. -->
@@ -195,7 +195,10 @@
             <input id="rom-saves-file" type="file" accept=".gci" style="display:none">
         </div>
 
-        <button id="rom-start" type="button" disabled>Start</button>
+        <div id="rom-actions">
+            <button id="rom-settings-btn" type="button">⚙ Settings</button>
+            <button id="rom-start" type="button" disabled>Start</button>
+        </div>
     </div>
 
     <button id="tc-style-swap" type="button" aria-label="Toggle touch controls" title="Toggle touch controls (simplified ↔ full)"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.146 15.854a1.207 1.207 0 0 1 1.708 0l1.56 1.56A2 2 0 0 1 15 18.828V21a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2.172a2 2 0 0 1 .586-1.414zM18.828 15a2 2 0 0 1-1.414-.586l-1.56-1.56a1.207 1.207 0 0 1 0-1.708l1.56-1.56A2 2 0 0 1 18.828 9H21a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1zm-12.242-.586A2 2 0 0 1 5.172 15H3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h2.172a2 2 0 0 1 1.414.586l1.56 1.56a1.207 1.207 0 0 1 0 1.708zM9 3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2.172a2 2 0 0 1-.586 1.414l-1.56 1.56a1.207 1.207 0 0 1-1.708 0l-1.56-1.56A2 2 0 0 1 9 5.172z"/></svg></button>
@@ -206,6 +209,83 @@
     <dialog id="settings-menu" aria-labelledby="settings-title">
         <div class="menu-body">
             <h2 id="settings-title">Settings</h2>
+
+            <h3>Gameplay</h3>
+            <div class="row">
+                <label for="setting-borderless-acres">Borderless Acres</label>
+                <select id="setting-borderless-acres">
+                    <option value="1">On (Continuous)</option>
+                    <option value="0">Off (Original Transitions)</option>
+                </select>
+            </div>
+            <div class="row">
+                <label for="setting-disable-resetti">Mr. Resetti</label>
+                <select id="setting-disable-resetti">
+                    <option value="0">Enabled (Normal Penalty)</option>
+                    <option value="1">Disabled (No Penalty)</option>
+                </select>
+            </div>
+            <div class="row">
+                <label for="setting-shop-visitor">Shop Upgrade</label>
+                <select id="setting-shop-visitor">
+                    <option value="0">Standard (Multiplayer Visitor Required)</option>
+                    <option value="1">Singleplayer (No Visitor Required)</option>
+                </select>
+            </div>
+            <div class="row">
+                <label for="setting-nes-aspect">NES Aspect</label>
+                <select id="setting-nes-aspect">
+                    <option value="1">4:3 Pillarbox</option>
+                    <option value="0">Stretch to Screen</option>
+                </select>
+            </div>
+
+            <h3>Graphics &amp; Display</h3>
+            <div class="row">
+                <label for="postfx-mode-select">Filter</label>
+                <select id="postfx-mode-select">
+                    <option value="off">Off</option>
+                    <option value="crt-basic">CRT Basic</option>
+                    <option value="crt-full">CRT Full</option>
+                    <option value="lcd">LCD</option>
+                    <option value="cmyk-halftone">CMYK Halftone</option>
+                    <option value="ascii">ASCII</option>
+                </select>
+            </div>
+            <div class="row">
+                <label for="setting-max-fps">Max FPS</label>
+                <select id="setting-max-fps">
+                    <option value="60">60 FPS</option>
+                    <option value="120">120 FPS</option>
+                    <option value="0">Uncapped</option>
+                </select>
+            </div>
+            <div class="row">
+                <label for="setting-texture-filtering">Texture Filtering</label>
+                <select id="setting-texture-filtering">
+                    <option value="1">Filtered (Smooth)</option>
+                    <option value="0">Nearest-Neighbor (Pixelated)</option>
+                </select>
+            </div>
+
+            <h3>Audio</h3>
+            <div class="row">
+                <label for="setting-master-volume">Master Volume</label>
+                <input id="setting-master-volume" type="range" min="0" max="100" step="5" value="100" />
+                <span id="setting-master-volume-val" class="setting-num-val">100%</span>
+            </div>
+
+            <h3>Input &amp; Deadzones</h3>
+            <div class="row">
+                <label for="setting-stick-deadzone">Stick Deadzone</label>
+                <input id="setting-stick-deadzone" type="range" min="0" max="40" step="2" value="12" />
+                <span id="setting-stick-deadzone-val" class="setting-num-val">12%</span>
+            </div>
+            <div class="row">
+                <label for="setting-cstick-deadzone">C-Stick Deadzone</label>
+                <input id="setting-cstick-deadzone" type="range" min="0" max="40" step="2" value="12" />
+                <span id="setting-cstick-deadzone-val" class="setting-num-val">12%</span>
+            </div>
 
             <h3>Saves</h3>
             <div id="settings-saves" class="rom-saves-grid">
@@ -242,19 +322,6 @@
                 <label for="tc-opacity-range">Opacity</label>
                 <input id="tc-opacity-range" type="range" min="10" max="80" step="5" />
                 <span id="tc-opacity-value" style="opacity:0.7; font-variant-numeric: tabular-nums; min-width: 3em; text-align: right;"></span>
-            </div>
-
-            <h3>Display</h3>
-            <div class="row">
-                <label for="postfx-mode-select">Filter</label>
-                <select id="postfx-mode-select">
-                    <option value="off">Off</option>
-                    <option value="crt-basic">CRT Basic</option>
-                    <option value="crt-full">CRT Full</option>
-                    <option value="lcd">LCD</option>
-                    <option value="cmyk-halftone">CMYK Halftone</option>
-                    <option value="ascii">ASCII</option>
-                </select>
             </div>
 
             <h3>Control Assignments</h3>
@@ -352,15 +419,11 @@
                 c.width  = FIXED_CANVAS_W;
                 c.height = FIXED_CANVAS_H;
             }
-            c.style.width = '100%';
-            c.style.height = '100%';
         }
         initCanvasSize();
         // Visualviewport listener kept as a no-op-on-canvas reflow trigger:
         // CSS handles the display side via 100vw/100dvh + object-fit.
-        function resizeCanvasToViewport() {
-            initCanvasSize();
-        }
+        function resizeCanvasToViewport() { /* no longer touches canvas dims */ }
         window.addEventListener('resize', resizeCanvasToViewport);
 
         // Mobile Chrome reports an unstable inner{Width,Height} during the
@@ -484,14 +547,14 @@
             var fullscreenBtn = document.getElementById('fullscreen-toggle');
             var audioBtn      = document.getElementById('audio-toggle');
             var styleSwapBtn  = document.getElementById('tc-style-swap');
-            var ready = _runtimeReady && !pickerEl.classList.contains('visible');
-            if (gearBtn)       gearBtn.style.display       = ready ? 'flex' : 'none';
-            if (fullscreenBtn) fullscreenBtn.style.display = (ready && _fullscreenAvailable()) ? 'flex' : 'none';
-            if (audioBtn)      audioBtn.style.display      = ready ? 'flex' : 'none';
+            var inGame = _runtimeReady && !pickerEl.classList.contains('visible');
+            if (gearBtn)       gearBtn.style.display       = 'flex';
+            if (fullscreenBtn) fullscreenBtn.style.display = (inGame && _fullscreenAvailable()) ? 'flex' : 'none';
+            if (audioBtn)      audioBtn.style.display      = inGame ? 'flex' : 'none';
             // Touch-style swap shown alongside the gear; the swap is harmless
             // for non-touch users (it just toggles the touch-overlay style
             // even when nothing's bound to it).
-            if (styleSwapBtn)  styleSwapBtn.style.display  = ready ? 'flex' : 'none';
+            if (styleSwapBtn)  styleSwapBtn.style.display  = inGame ? 'flex' : 'none';
         }
         function updateAudioToggleIcon() {
             var audioBtn = document.getElementById('audio-toggle');
@@ -1034,23 +1097,69 @@
         });
         // ----- Settings persistence -----
         // Single localStorage entry, JSON-encoded. Loaded synchronously so
-        // initial state (mute, etc.) is available before the audio chain
-        // is wired and before the menu is opened.
+        // initial state (mute, gameplay, graphics, audio, deadzones) is
+        // available before the audio chain is wired, before WASM boots,
+        // and before the settings menu is opened.
         var SETTINGS_KEY = 'slider-settings';
-        var _settings = { muteAudio: false };
+        var _settings = {
+            muteAudio: false,
+            borderless_acres: 1,
+            disable_resetti: 0,
+            disable_shop_visitor_req: 0,
+            nes_aspect: 1,
+            max_fps: 60,
+            texture_filtering: 1,
+            master_volume: 100,
+            stick_deadzone: 12,
+            cstick_deadzone: 12
+        };
+
+        function applySettingToWasm(key, val) {
+            if (typeof Module === 'undefined') return;
+            try {
+                if (key === 'borderless_acres' && typeof Module._pc_setting_set_borderless_acres === 'function')
+                    Module._pc_setting_set_borderless_acres(val);
+                else if (key === 'disable_resetti' && typeof Module._pc_setting_set_disable_resetti === 'function')
+                    Module._pc_setting_set_disable_resetti(val);
+                else if (key === 'disable_shop_visitor_req' && typeof Module._pc_setting_set_disable_shop_visitor_req === 'function')
+                    Module._pc_setting_set_disable_shop_visitor_req(val);
+                else if (key === 'nes_aspect' && typeof Module._pc_setting_set_nes_aspect === 'function')
+                    Module._pc_setting_set_nes_aspect(val);
+                else if (key === 'max_fps' && typeof Module._pc_setting_set_max_fps === 'function')
+                    Module._pc_setting_set_max_fps(val);
+                else if (key === 'texture_filtering' && typeof Module._pc_setting_set_texture_filtering === 'function')
+                    Module._pc_setting_set_texture_filtering(val);
+                else if (key === 'master_volume' && typeof Module._pc_setting_set_master_volume === 'function')
+                    Module._pc_setting_set_master_volume(val);
+                else if (key === 'stick_deadzone' && typeof Module._pc_setting_set_stick_deadzone === 'function')
+                    Module._pc_setting_set_stick_deadzone(val);
+                else if (key === 'cstick_deadzone' && typeof Module._pc_setting_set_cstick_deadzone === 'function')
+                    Module._pc_setting_set_cstick_deadzone(val);
+            } catch (e) {}
+        }
+
         function loadSettings() {
             try {
                 var raw = localStorage.getItem(SETTINGS_KEY);
                 if (!raw) return;
                 var parsed = JSON.parse(raw);
                 if (parsed && typeof parsed === 'object') {
-                    if (typeof parsed.muteAudio === 'boolean') _settings.muteAudio = parsed.muteAudio;
+                    for (var k in _settings) {
+                        if (typeof parsed[k] === typeof _settings[k]) {
+                            _settings[k] = parsed[k];
+                        }
+                    }
                 }
             } catch (e) { /* corrupt entry — ignore, defaults stand */ }
         }
         function saveSettings(patch) {
             try {
-                if (patch && typeof patch === 'object') Object.assign(_settings, patch);
+                if (patch && typeof patch === 'object') {
+                    Object.assign(_settings, patch);
+                    for (var k in patch) {
+                        applySettingToWasm(k, patch[k]);
+                    }
+                }
                 localStorage.setItem(SETTINGS_KEY, JSON.stringify(_settings));
             } catch (e) { /* private mode / quota — non-fatal */ }
         }
@@ -1227,9 +1336,83 @@
         // once when _runtimeReady flips. No polling needed.
         updateGearVisibility();
 
+        function syncSettingsDialogUI() {
+            var ba = document.getElementById('setting-borderless-acres');
+            var dr = document.getElementById('setting-disable-resetti');
+            var sv = document.getElementById('setting-shop-visitor');
+            var na = document.getElementById('setting-nes-aspect');
+            var mf = document.getElementById('setting-max-fps');
+            var tf = document.getElementById('setting-texture-filtering');
+            var mv = document.getElementById('setting-master-volume');
+            var mvVal = document.getElementById('setting-master-volume-val');
+            var sdz = document.getElementById('setting-stick-deadzone');
+            var sdzVal = document.getElementById('setting-stick-deadzone-val');
+            var cdz = document.getElementById('setting-cstick-deadzone');
+            var cdzVal = document.getElementById('setting-cstick-deadzone-val');
+
+            if (ba) ba.value = String(_settings.borderless_acres);
+            if (dr) dr.value = String(_settings.disable_resetti);
+            if (sv) sv.value = String(_settings.disable_shop_visitor_req);
+            if (na) na.value = String(_settings.nes_aspect);
+            if (mf) mf.value = String(_settings.max_fps);
+            if (tf) tf.value = String(_settings.texture_filtering);
+            if (mv) {
+                mv.value = _settings.master_volume;
+                if (mvVal) mvVal.textContent = _settings.master_volume + '%';
+            }
+            if (sdz) {
+                sdz.value = _settings.stick_deadzone;
+                if (sdzVal) sdzVal.textContent = _settings.stick_deadzone + '%';
+            }
+            if (cdz) {
+                cdz.value = _settings.cstick_deadzone;
+                if (cdzVal) cdzVal.textContent = _settings.cstick_deadzone + '%';
+            }
+        }
+
+        function wireSettingsFormControls() {
+            function bindSelect(id, key) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('change', function() {
+                    var obj = {};
+                    obj[key] = parseInt(el.value, 10);
+                    saveSettings(obj);
+                });
+            }
+            function bindRange(id, valId, key) {
+                var el = document.getElementById(id);
+                var valEl = document.getElementById(valId);
+                if (!el) return;
+                el.addEventListener('input', function() {
+                    var num = parseInt(el.value, 10);
+                    if (valEl) valEl.textContent = num + '%';
+                    var obj = {};
+                    obj[key] = num;
+                    saveSettings(obj);
+                });
+            }
+
+            bindSelect('setting-borderless-acres',    'borderless_acres');
+            bindSelect('setting-disable-resetti',     'disable_resetti');
+            bindSelect('setting-shop-visitor',        'disable_shop_visitor_req');
+            bindSelect('setting-nes-aspect',          'nes_aspect');
+            bindSelect('setting-max-fps',             'max_fps');
+            bindSelect('setting-texture-filtering',   'texture_filtering');
+            bindRange('setting-master-volume', 'setting-master-volume-val', 'master_volume');
+            bindRange('setting-stick-deadzone', 'setting-stick-deadzone-val', 'stick_deadzone');
+            bindRange('setting-cstick-deadzone', 'setting-cstick-deadzone-val', 'cstick_deadzone');
+
+            var romSettingsBtn = document.getElementById('rom-settings-btn');
+            if (romSettingsBtn) romSettingsBtn.addEventListener('click', openMenu);
+        }
+        syncSettingsDialogUI();
+        wireSettingsFormControls();
+
         function openMenu() {
             setSaveStatus('');
             refreshSettingsSlots();
+            syncSettingsDialogUI();
             if (typeof menuEl.showModal === 'function') {
                 menuEl.showModal();
             } else {

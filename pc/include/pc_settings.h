@@ -30,6 +30,16 @@ void pc_settings_save(void);
 void pc_settings_apply(void);
 void pc_settings_cycle_resolution(int* width, int* height, int dir);
 
+void pc_setting_set_borderless_acres(int val);
+void pc_setting_set_disable_resetti(int val);
+void pc_setting_set_disable_shop_visitor_req(int val);
+void pc_setting_set_nes_aspect(int val);
+void pc_setting_set_max_fps(int val);
+void pc_setting_set_texture_filtering(int val);
+void pc_setting_set_master_volume(int val);
+void pc_setting_set_stick_deadzone(int val);
+void pc_setting_set_cstick_deadzone(int val);
+
 #ifdef __cplusplus
 }
 #endif

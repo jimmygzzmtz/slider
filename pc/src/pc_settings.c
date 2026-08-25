@@ -358,6 +358,87 @@ void pc_settings_apply(void) {
            g_pc_settings.fullscreen, g_pc_settings.vsync, g_pc_settings.max_fps, g_pc_settings.msaa);
 }
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#define EXPORT EMSCRIPTEN_KEEPALIVE
+
+EM_JS(void, pc_web_load_settings, (), {
+    try {
+        var raw = localStorage.getItem('slider-settings');
+        if (!raw) return;
+        var s = JSON.parse(raw);
+        if (!s || typeof s !== 'object') return;
+        if (typeof s.borderless_acres === 'number') _pc_setting_set_borderless_acres(s.borderless_acres);
+        if (typeof s.disable_resetti === 'number') _pc_setting_set_disable_resetti(s.disable_resetti);
+        if (typeof s.disable_shop_visitor_req === 'number') _pc_setting_set_disable_shop_visitor_req(s.disable_shop_visitor_req);
+        if (typeof s.nes_aspect === 'number') _pc_setting_set_nes_aspect(s.nes_aspect);
+        if (typeof s.max_fps === 'number') _pc_setting_set_max_fps(s.max_fps);
+        if (typeof s.texture_filtering === 'number') _pc_setting_set_texture_filtering(s.texture_filtering);
+        if (typeof s.master_volume === 'number') _pc_setting_set_master_volume(s.master_volume);
+        if (typeof s.stick_deadzone === 'number') _pc_setting_set_stick_deadzone(s.stick_deadzone);
+        if (typeof s.cstick_deadzone === 'number') _pc_setting_set_cstick_deadzone(s.cstick_deadzone);
+    } catch (e) {}
+});
+#else
+#define EXPORT
+#endif
+
+EXPORT void pc_setting_set_borderless_acres(int val) {
+    if (val == 0 || val == 1) {
+        g_pc_settings.borderless_acres = val;
+        apply_borderless_acres_setting();
+    }
+}
+
+EXPORT void pc_setting_set_disable_resetti(int val) {
+    if (val == 0 || val == 1) {
+        g_pc_settings.disable_resetti = val;
+    }
+}
+
+EXPORT void pc_setting_set_disable_shop_visitor_req(int val) {
+    if (val == 0 || val == 1) {
+        g_pc_settings.disable_shop_visitor_req = val;
+    }
+}
+
+EXPORT void pc_setting_set_nes_aspect(int val) {
+    if (val == 0 || val == 1) {
+        g_pc_settings.nes_aspect = val;
+    }
+}
+
+EXPORT void pc_setting_set_max_fps(int val) {
+    if (val >= 0) {
+        g_pc_settings.max_fps = val;
+        apply_frame_limit_setting();
+    }
+}
+
+EXPORT void pc_setting_set_texture_filtering(int val) {
+    if (val == 0 || val == 1) {
+        g_pc_settings.texture_filtering = val;
+    }
+}
+
+EXPORT void pc_setting_set_master_volume(int val) {
+    if (val >= 0 && val <= 100) {
+        g_pc_settings.master_volume = val;
+    }
+}
+
+EXPORT void pc_setting_set_stick_deadzone(int val) {
+    if (val >= 0 && val <= 40) {
+        g_pc_settings.stick_deadzone = val;
+    }
+}
+
+EXPORT void pc_setting_set_cstick_deadzone(int val) {
+    if (val >= 0 && val <= 40) {
+        g_pc_settings.cstick_deadzone = val;
+    }
+}
+
 void pc_settings_load(void) {
 #ifdef TARGET_ANDROID
     /* On Android, use defaults — fullscreen, VSync off (software frame limiter
@@ -368,11 +449,13 @@ void pc_settings_load(void) {
     return;
 #endif
 #ifdef __EMSCRIPTEN__
-    /* Web: settings can't meaningfully persist (settings.ini lives in MEMFS,
-     * which is wiped on reload) and most fields are no-ops in the browser
-     * (window size comes from the canvas, fullscreen is browser-controlled,
-     * vsync is implicit via requestAnimationFrame, MSAA sample count is
-     * browser-chosen). Keep the in-struct defaults. */
+    pc_web_load_settings();
+    apply_frame_limit_setting();
+    apply_borderless_acres_setting();
+    printf("[Settings] Loaded Web settings: max_fps=%d borderless_acres=%d resetti=%d shop_visitor=%d nes_aspect=%d\n",
+           g_pc_settings.max_fps, g_pc_settings.borderless_acres,
+           g_pc_settings.disable_resetti, g_pc_settings.disable_shop_visitor_req,
+           g_pc_settings.nes_aspect);
     return;
 #endif
     FILE* f = fopen(SETTINGS_FILE, "r");

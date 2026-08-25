@@ -247,7 +247,7 @@ void pc_platform_init(void) {
         Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
         int win_w = 0, win_h = 0;
         emscripten_get_canvas_element_size("#canvas", &win_w, &win_h);
-        if (win_w <= 0 || win_h <= 0) { win_w = 1280; win_h = 720; }
+        if (win_w <= 0 || win_h <= 0) { win_w = PC_SCREEN_WIDTH; win_h = PC_SCREEN_HEIGHT; }
 #else
         Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
         int win_w = g_pc_settings.window_width;
@@ -339,16 +339,17 @@ void pc_platform_shutdown(void) {
 }
 
 void pc_platform_update_window_size(void) {
-    SDL_GL_GetDrawableSize(g_pc_window, &g_pc_window_w, &g_pc_window_h);
 #ifdef __EMSCRIPTEN__
-    if (g_pc_window_w <= 0 || g_pc_window_h <= 0) {
-        int canvas_w = 0, canvas_h = 0;
-        emscripten_get_canvas_element_size("#canvas", &canvas_w, &canvas_h);
-        if (canvas_w > 0 && canvas_h > 0) {
-            g_pc_window_w = canvas_w;
-            g_pc_window_h = canvas_h;
-        }
+    int canvas_w = 0, canvas_h = 0;
+    emscripten_get_canvas_element_size("#canvas", &canvas_w, &canvas_h);
+    if (canvas_w > 0 && canvas_h > 0) {
+        g_pc_window_w = canvas_w;
+        g_pc_window_h = canvas_h;
+    } else {
+        SDL_GL_GetDrawableSize(g_pc_window, &g_pc_window_w, &g_pc_window_h);
     }
+#else
+    SDL_GL_GetDrawableSize(g_pc_window, &g_pc_window_w, &g_pc_window_h);
 #endif
     if (g_pc_window_w <= 0) g_pc_window_w = PC_SCREEN_WIDTH;
     if (g_pc_window_h <= 0) g_pc_window_h = PC_SCREEN_HEIGHT;

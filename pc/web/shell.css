@@ -433,9 +433,16 @@ body.tc-bias-top #container {
 .rom-saves-status.error { color: var(--status-err); opacity: 1; }
 .rom-saves-status.ok    { color: var(--status-ok); opacity: 1; }
 
-#rom-start {
+#rom-actions {
+    display: flex;
+    gap: 12px;
     margin-top: 8px;
     margin-bottom: 24px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+#rom-actions button,
+#rom-start {
     padding: 12px 24px;
     background: #1a1a1a;
     color: #ddd;
@@ -445,17 +452,28 @@ body.tc-bias-top #container {
     font-size: 15px;
     font-weight: 600;
     cursor: pointer;
-    min-width: 200px;
+    min-width: 140px;
     transition: background 0.1s, border-color 0.1s, opacity 0.1s;
 }
+#rom-actions button:hover:not(:disabled),
 #rom-start:hover:not(:disabled) {
     background: rgba(255,255,255,0.1);
     border-color: #ccc;
 }
+#rom-actions button:disabled,
 #rom-start:disabled {
     opacity: 0.4;
     cursor: not-allowed;
     border-color: #444;
+}
+#rom-settings-btn {
+    border-color: #666 !important;
+}
+.setting-num-val {
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5em;
+    text-align: right;
 }
 
 #loading-overlay {
@@ -486,7 +504,7 @@ body.tc-bias-top #container {
      * to viewport-fit=cover. env() returns 0 on devices/browsers
      * without insets, so the offsets degrade to plain 8 / 48 px. */
     top: calc(8px + env(safe-area-inset-top));
-    z-index: 5;
+    z-index: 20;
     width: 32px;
     height: 32px;
     padding: 0;
