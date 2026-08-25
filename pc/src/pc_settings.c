@@ -137,6 +137,7 @@ static void apply_frame_limit_setting(void) {
         max_fps = 0;
     }
 
+    g_pc_no_framelimit = (max_fps == 0);
     g_frame_limiter = (u32)max_fps;
 }
 

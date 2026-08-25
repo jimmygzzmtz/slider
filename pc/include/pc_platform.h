@@ -70,6 +70,7 @@ extern SDL_GLContext  g_pc_gl_context;
 extern int           g_pc_running;
 extern int           g_pc_verbose;
 extern int           g_pc_frame_limit_override;
+extern int           g_pc_no_framelimit;
 extern int           g_pc_speedhack_enabled;
 extern int           g_pc_time_override;
 extern int           g_pc_min_override;

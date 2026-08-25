@@ -44,6 +44,7 @@ SDL_Window*   g_pc_window = NULL;
 SDL_GLContext  g_pc_gl_context = NULL;
 int           g_pc_running = 1;
 int           g_pc_frame_limit_override = -1;
+int           g_pc_no_framelimit = 0;
 int           g_pc_speedhack_enabled = 0;
 int           g_pc_verbose = 0;
 int           g_pc_time_override = -1; /* -1=system clock, 0-23=override hour */
@@ -492,6 +493,7 @@ int main(int argc, char* argv[]) {
             }
         } else if (strcmp(argv[i], "--no-framelimit") == 0) {
             g_pc_frame_limit_override = 0;
+            g_pc_no_framelimit = 1;
         } else if (strcmp(argv[i], "--uber-shader") == 0) {
             extern int g_pc_uber_shader_only;
             g_pc_uber_shader_only = 1;
