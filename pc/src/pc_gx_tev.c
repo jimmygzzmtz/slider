@@ -29,11 +29,36 @@ char* pc_load_text_file(const char* path) {
     return buf;
 }
 
+static const char* shader_version_line(void) {
+#ifdef __EMSCRIPTEN__
+    return "#version 300 es\n";
+#else
+    return "#version 330 core\n";
+#endif
+}
+
 static char* load_shader(const char* filename) {
     char path[512];
     snprintf(path, sizeof(path), "shaders/%s", filename);
     char* src = pc_load_text_file(path);
     if (src) {
+#ifdef __EMSCRIPTEN__
+        /* Emscripten exposes WebGL2 as GLSL ES 3.00; desktop shaders still
+         * use 330 core, so normalize the version directive at load time. */
+        if (strncmp(src, "#version 330 core", 17) == 0) {
+            char* version_start = strstr(src, "#version");
+            char* newline = strchr(version_start ? version_start : src, '\n');
+            size_t prefix = version_start ? (size_t)(newline ? (newline - src) + 1 : strlen(src)) : 0;
+            size_t rest_len = strlen(src + prefix);
+            char* rewritten = (char*)malloc(strlen(shader_version_line()) + rest_len + 1);
+            if (rewritten) {
+                strcpy(rewritten, shader_version_line());
+                strcpy(rewritten + strlen(shader_version_line()), src + prefix);
+                free(src);
+                src = rewritten;
+            }
+        }
+#endif
         printf("[PC/TEV] Loaded shader: %s\n", path);
     } else {
         fprintf(stderr, "FATAL: Could not load shader: %s\n", path);
@@ -363,7 +388,9 @@ static char* build_specialized_source(const PCGXShaderKey* k) {
     if (!out) return NULL;
 
     size_t pos = 0;
-    memcpy(out + pos, "#version 330 core\n", 18); pos += 18;
+    const char* version_line = shader_version_line();
+    size_t version_len = strlen(version_line);
+    memcpy(out + pos, version_line, version_len); pos += version_len;
     memcpy(out + pos, consts, (size_t)clen); pos += (size_t)clen;
 
     const char* p = s_frag_base;
