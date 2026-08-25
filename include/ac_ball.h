@@ -36,6 +36,10 @@ typedef struct actor_ball_s {
     s16 state_flags;
     s16 unk20A;
     s16 unk20C;
+    f32 grass_effect_accum;
+    f32 water_effect_accum;
+    u32 water_effect_frame;
+    f32 collider_timer_accum;
 } BALL_ACTOR;
 
 extern ACTOR_PROFILE Ball_Profile;

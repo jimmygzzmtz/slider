@@ -1625,7 +1625,7 @@ typedef struct player_main_swing_axe_s {
     /* 0x14 */ int tree_ut_z;
     /* 0x18 */ int bee_flag;
     /* 0x1C */ s16 bee_angle_y;
-    /* 0x20 */ int bee_counter;
+    /* 0x20 */ f32 bee_counter;
 } mPlayer_main_swing_axe_c;
 
 typedef struct player_main_reflect_axe_s {
@@ -1843,7 +1843,7 @@ typedef struct player_main_shake_tree_s {
     int tree_ut_z;
     int bee_flag;
     s16 bee_angle_y;
-    int bee_spawn_timer;
+    f32 bee_spawn_timer;
 } mPlayer_main_shake_tree_c;
 
 typedef struct player_main_struggle_pitfall_s {
@@ -2075,7 +2075,7 @@ typedef struct controller_data_s {
 
 typedef struct player_eye_pattern_s {
     s16 pattern;
-    s16 timer;
+    float timer;
 } mPlayer_eye_pattern_c;
 
 /* sizeof(struct player_actor_s) == 0x13A8 */
@@ -2306,6 +2306,9 @@ struct player_actor_s {
     /* 0x1394 */ mActor_name_t item_in_front; /* item directly in front of the player */
     /* 0x1398 */ xyz_t forward_ut_pos;        /* wpos of unit in front of player */
     /* 0x13A4 */ s8 update_scene_bg_mode;
+#ifdef TARGET_PC
+    f32 sunburn_time_accum;
+#endif
 };
 
 extern void Player_actor_ct(ACTOR*, GAME*);

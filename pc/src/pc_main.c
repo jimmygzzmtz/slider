@@ -1,4 +1,4 @@
-/* pc_main.c - PC entry point: SDL2/GL init, crash protection, boot sequence */
+/* pc_main.c - PC entry point: SDL2/GL init and boot sequence */
 #include "pc_platform.h"
 #include "pc_gx_internal.h"
 #include "pc_texture_pack.h"
@@ -7,6 +7,10 @@
 #include "pc_assets.h"
 #include "pc_disc.h"
 #include "pc_typing.h"
+#include "pc_pause_menu.h"
+#include "pc_settings_menu.h"
+#include "pc_profiler.h"
+#include "m_kankyo.h"
 
 /* prefer discrete GPU on laptops */
 #ifdef _WIN32
@@ -17,11 +21,17 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 SDL_Window*   g_pc_window = NULL;
 SDL_GLContext  g_pc_gl_context = NULL;
 int           g_pc_running = 1;
-int           g_pc_no_framelimit = 0;
+int           g_pc_frame_limit_override = -1;
+int           g_pc_speedhack_enabled = 0;
 int           g_pc_verbose = 0;
 int           g_pc_time_override = -1; /* -1=system clock, 0-23=override hour */
 int           g_pc_min_override = -1; /* -1=system clock, 0-59=override minute */
 int           g_pc_sec_override = -1; /* -1=system clock, 0-59=override second */
+int           g_pc_date_month = -1; /* -1=system clock, 1-12=override month */
+int           g_pc_date_day = -1; /* -1=system clock, 1-31=override day */
+int           g_pc_date_year = -1; /* -1=system clock, else override year */
+int           g_pc_weather_override = -1;
+int           g_pc_weather_intensity_override = mEnv_WEATHER_INTENSITY_HEAVY;
 int           g_pc_window_w = PC_SCREEN_WIDTH;
 int           g_pc_window_h = PC_SCREEN_HEIGHT;
 int           g_pc_widescreen_stretch = 0;
@@ -30,83 +40,10 @@ int           g_pc_widescreen_stretch = 0;
 unsigned int pc_image_base = 0;
 unsigned int pc_image_end  = 0;
 
-static jmp_buf* pc_active_jmpbuf = NULL;
-static volatile unsigned int pc_last_crash_addr = 0;
-
-static volatile unsigned int pc_last_crash_data_addr = 0;
-
-#ifdef _WIN32
-/* longjmp from VEH is technically UB, but works on x86 MinGW (no SEH to corrupt).
- * GCC doesn't have __try/__except and checking every pointer in emu64 is impractical. */
-static LONG WINAPI pc_veh_handler(PEXCEPTION_POINTERS ep) {
-    DWORD code = ep->ExceptionRecord->ExceptionCode;
-    if (pc_active_jmpbuf != NULL &&
-        (code == EXCEPTION_ACCESS_VIOLATION ||
-         code == EXCEPTION_ILLEGAL_INSTRUCTION ||
-         code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
-         code == EXCEPTION_PRIV_INSTRUCTION)) {
-        pc_last_crash_addr = (unsigned int)(uintptr_t)ep->ExceptionRecord->ExceptionAddress;
-        if (code == EXCEPTION_ACCESS_VIOLATION)
-            pc_last_crash_data_addr = (unsigned int)(uintptr_t)ep->ExceptionRecord->ExceptionInformation[1];
-        else
-            pc_last_crash_data_addr = 0;
-        jmp_buf* buf = pc_active_jmpbuf;
-        pc_active_jmpbuf = NULL;
-        longjmp(*buf, 1);
-    }
-    return EXCEPTION_CONTINUE_SEARCH;
-}
-#else
-/* POSIX equivalent of VEH — longjmp from signal handler (POSIX-defined for program faults) */
-static void pc_signal_handler(int sig, siginfo_t* info, void* ucontext) {
-    (void)ucontext;
-    if (pc_active_jmpbuf != NULL) {
-        pc_last_crash_addr = (unsigned int)(uintptr_t)info->si_addr;
-        pc_last_crash_data_addr = (sig == SIGSEGV) ?
-            (unsigned int)(uintptr_t)info->si_addr : 0;
-        jmp_buf* buf = pc_active_jmpbuf;
-        pc_active_jmpbuf = NULL;
-        longjmp(*buf, 1);
-    }
-    signal(sig, SIG_DFL);
-    raise(sig);
-}
-#endif
-
-unsigned int pc_crash_get_data_addr(void) {
-    return pc_last_crash_data_addr;
-}
-
-void pc_crash_protection_init(void) {
-    static int installed = 0;
-    if (!installed) {
-#ifdef _WIN32
-        AddVectoredExceptionHandler(1, pc_veh_handler);
-#else
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sa.sa_sigaction = pc_signal_handler;
-        sa.sa_flags = SA_SIGINFO;
-        sigaction(SIGSEGV, &sa, NULL);
-        sigaction(SIGILL, &sa, NULL);
-        sigaction(SIGFPE, &sa, NULL);
-#endif
-        installed = 1;
-    }
-}
-
-void pc_crash_set_jmpbuf(jmp_buf* buf) {
-    pc_active_jmpbuf = buf;
-}
-
-unsigned int pc_crash_get_addr(void) {
-    return pc_last_crash_addr;
-}
-
 void pc_platform_init(void) {
 #ifdef _WIN32
     SetProcessDPIAware();
-
+    SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");
 #endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO | SDL_INIT_TIMER) < 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -183,6 +120,17 @@ void pc_platform_init(void) {
 
 extern void PADCleanup(void);
 
+static void pc_speedhack_toggle(void) {
+    g_pc_speedhack_enabled = !g_pc_speedhack_enabled;
+    if (g_pc_window != NULL) {
+        SDL_SetWindowTitle(g_pc_window, g_pc_speedhack_enabled ? "Animal Crossing [5x]" : PC_WINDOW_TITLE);
+    }
+
+    if (g_pc_verbose) {
+        printf("[PC] speedhack %s\n", g_pc_speedhack_enabled ? "5x" : "off");
+    }
+}
+
 void pc_platform_shutdown(void) {
     pc_audio_shutdown();
     pc_audio_mq_shutdown();
@@ -208,23 +156,8 @@ void pc_platform_update_window_size(void) {
 }
 
 void pc_platform_swap_buffers(void) {
+    pc_gx_draw_pending();
     SDL_GL_SwapWindow(g_pc_window);
-}
-
-static int pc_confirm_quit(void) {
-    const SDL_MessageBoxButtonData buttons[] = {
-        { SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel" },
-        { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Quit" },
-    };
-    const SDL_MessageBoxData data = {
-        SDL_MESSAGEBOX_INFORMATION, g_pc_window,
-        "Animal Crossing", "Are you sure you want to quit?",
-        2, buttons, NULL
-    };
-    int button = 0;
-    if (SDL_ShowMessageBox(&data, &button) < 0)
-        return 1; /* on error, just quit */
-    return button == 1;
 }
 
 int pc_platform_poll_events(void) {
@@ -235,30 +168,68 @@ int pc_platform_poll_events(void) {
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
             case SDL_QUIT:
-                if (pc_confirm_quit()) {
-                    g_pc_running = 0;
-                    return 0;
-                }
-                break;
+                g_pc_running = 0;
+                return 0;
             case SDL_WINDOWEVENT:
                 if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
                     pc_platform_update_window_size();
                 }
                 break;
             case SDL_KEYDOWN:
-                if (event.key.keysym.sym == SDLK_ESCAPE) {
-                    if (pc_confirm_quit()) {
-                        g_pc_running = 0;
-                        return 0;
-                    }
+                /* Keybinding capture eats all input first (works from both
+                 * the pause menu and the title Options menu). */
+                if (pc_settings_menu_capture_active()) {
+                    pc_settings_menu_handle_capture_event(&event);
+                    break;
                 }
                 if (event.key.keysym.sym == SDLK_F3 && !event.key.repeat) {
-                    g_pc_no_framelimit ^= 1;
-                    printf("[PC] Frame limiter %s\n", g_pc_no_framelimit ? "OFF" : "ON");
+                    pc_speedhack_toggle();
+                    break;
+                }
+                if (event.key.keysym.sym == SDLK_ESCAPE && !event.key.repeat) {
+                    if (g_pc_paused) {
+                        pc_pause_menu_handle_event(&event);
+                    } else {
+                        pc_pause_menu_toggle();
+                    }
+                    break;
+                }
+                if (g_pc_paused) {
+                    pc_pause_menu_handle_event(&event);
+                    break; /* swallow all keys while paused */
                 }
                 pc_typing_handle_event(&event);
                 break;
+            case SDL_MOUSEBUTTONDOWN:
+                if (pc_settings_menu_capture_active()) {
+                    pc_settings_menu_handle_capture_event(&event);
+                }
+                break;
+            case SDL_CONTROLLERBUTTONDOWN:
+                if (pc_settings_menu_capture_active()) {
+                    pc_settings_menu_handle_capture_event(&event);
+                    break;
+                }
+                if (g_pc_paused) {
+                    pc_pause_menu_handle_event(&event);
+                    break;
+                }
+                /* Back/Select opens the pause menu (controller Esc). */
+                if (event.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) {
+                    pc_pause_menu_toggle();
+                }
+                break;
+            case SDL_CONTROLLERAXISMOTION:
+                if (pc_settings_menu_capture_active()) {
+                    pc_settings_menu_handle_capture_event(&event);
+                    break;
+                }
+                if (g_pc_paused) {
+                    pc_pause_menu_handle_event(&event);
+                }
+                break;
             case SDL_TEXTINPUT:
+                if (g_pc_paused) break;
                 pc_typing_handle_event(&event);
                 break;
         }
@@ -270,20 +241,61 @@ int pc_platform_poll_events(void) {
 extern void ac_entry(void);
 extern int boot_main(int argc, const char** argv);
 
+static int pc_parse_rain_intensity(const char* text) {
+    if (strcmp(text, "light") == 0) {
+        return mEnv_WEATHER_INTENSITY_LIGHT;
+    }
+
+    if (strcmp(text, "normal") == 0) {
+        return mEnv_WEATHER_INTENSITY_NORMAL;
+    }
+
+    if (strcmp(text, "heavy") == 0) {
+        return mEnv_WEATHER_INTENSITY_HEAVY;
+    }
+
+    return -1;
+}
+
 int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printf("Usage: AnimalCrossing [options]\n");
             printf("  --verbose, -v       Enable diagnostic output\n");
-            printf("  --no-framelimit     Disable frame limiter\n");
+            printf("  --no-framelimit     Alias for --framelimit 0 (uncapped)\n");
+            printf("  --framelimit N      Set the target frame rate (default 60, 0 = uncapped)\n");
+            printf("  --profile [N]       Print frame profiler summary every N frames (default 120)\n");
             printf("  --model-viewer [N]  Launch model viewer (optional start index)\n");
             printf("  --time H[:M[:S]]    Override in-game time (e.g. 5, 17:30, 5:55:00)\n");
+            printf("  --date M/D[/Y]      Override in-game date (e.g. 7/4, 12/24/2026)\n");
+            printf("  --rain [intensity]  Force rainy weather; intensity is light, normal, or heavy\n");
+            printf("  --uber-shader       Disable shader specialization (single uber shader)\n");
             printf("  --help, -h          Show this help message\n");
             return 0;
+        } else if (strcmp(argv[i], "--framelimit") == 0) {
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                int v = atoi(argv[i + 1]);
+                if (v > 0) {
+                    g_pc_frame_limit_override = v;
+                } else if (v == 0) {
+                    g_pc_frame_limit_override = 0;
+                }
+                i++;
+            }
         } else if (strcmp(argv[i], "--no-framelimit") == 0) {
-            g_pc_no_framelimit = 1;
+            g_pc_frame_limit_override = 0;
+        } else if (strcmp(argv[i], "--uber-shader") == 0) {
+            extern int g_pc_uber_shader_only;
+            g_pc_uber_shader_only = 1;
         } else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0) {
             g_pc_verbose = 1;
+        } else if (strcmp(argv[i], "--profile") == 0) {
+            g_pc_profile_enabled = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                int interval = atoi(argv[i + 1]);
+                if (interval > 0) g_pc_profile_interval = interval;
+                i++;
+            }
         } else if (strcmp(argv[i], "--model-viewer") == 0) {
             g_pc_model_viewer = 1;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -297,12 +309,31 @@ int main(int argc, char* argv[]) {
             if (m >= 0 && m <= 59) g_pc_min_override = m;
             if (s >= 0 && s <= 59) g_pc_sec_override = s;
             i++;
+        } else if (strcmp(argv[i], "--date") == 0 && i + 1 < argc) {
+            int mo = -1, d = -1, y = -1;
+            sscanf(argv[i + 1], "%d/%d/%d", &mo, &d, &y);
+            if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+                g_pc_date_month = mo;
+                g_pc_date_day = d;
+                if (y >= 2000) g_pc_date_year = y;
+            }
+            i++;
+        } else if (strcmp(argv[i], "--rain") == 0) {
+            g_pc_weather_override = mEnv_WEATHER_RAIN;
+            g_pc_weather_intensity_override = mEnv_WEATHER_INTENSITY_HEAVY;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                int intensity = pc_parse_rain_intensity(argv[i + 1]);
+                if (intensity >= 0) {
+                    g_pc_weather_intensity_override = intensity;
+                    i++;
+                }
+            }
         }
     }
 
     /* Redirect stdout/stderr to NUL unless verbose — unbuffered terminal writes
      * are extremely slow on Windows and tank FPS. */
-    if (!g_pc_verbose) {
+    if (!g_pc_verbose && !g_pc_profile_enabled) {
 #ifdef _WIN32
         freopen("NUL", "w", stdout);
         freopen("NUL", "w", stderr);
@@ -353,7 +384,17 @@ int main(int argc, char* argv[]) {
     pc_keybindings_load();
     pc_platform_init();
     pc_disc_init();
-    pc_assets_init();
+    if (!pc_assets_init()) {
+        const char* msg =
+            "No game data found.\n\n"
+            "Animal Crossing needs the original GameCube ROM to run.\n"
+            "Place a disc image (.iso, .gcm, or .ciso) to the \"rom\" subfolder.";
+        fprintf(stderr, "[PC] %s\n", msg);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+                                 "Animal Crossing - Missing ROM", msg, g_pc_window);
+        pc_platform_shutdown();
+        return 1;
+    }
 
     ac_entry();                         /* sets HotStartEntry = &entry */
     boot_main(argc, (const char**)argv); /* full init → HotStartEntry → game loop */

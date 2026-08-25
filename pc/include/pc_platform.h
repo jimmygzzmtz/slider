@@ -1,4 +1,4 @@
-/* pc_platform.h - SDL2/OpenGL platform layer, global state, crash protection */
+/* pc_platform.h - SDL2/OpenGL platform layer and global state */
 #ifndef PC_PLATFORM_H
 #define PC_PLATFORM_H
 
@@ -33,6 +33,8 @@
 #define PC_ARAM_SIZE          (16 * 1024 * 1024)
 #define PC_FIFO_SIZE          (256 * 1024)
 
+#define PC_SPEEDHACK_MULTIPLIER 10.0
+
 #define PC_PI  3.14159265358979323846
 #define PC_PIf 3.14159265358979323846f
 #define PC_DEG_TO_RAD (PC_PI / 180.0)
@@ -51,12 +53,10 @@
 #undef near
 #undef far
 #else
-#include <signal.h>
 #include <sys/mman.h>
 #include <dlfcn.h>
 #include <elf.h>
 #endif
-#include <setjmp.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -67,10 +67,17 @@ extern SDL_Window*   g_pc_window;
 extern SDL_GLContext  g_pc_gl_context;
 extern int           g_pc_running;
 extern int           g_pc_verbose;
-extern int           g_pc_no_framelimit;
+extern int           g_pc_frame_limit_override;
+extern int           g_pc_speedhack_enabled;
 extern int           g_pc_time_override;
 extern int           g_pc_min_override;
 extern int           g_pc_sec_override;
+extern int           g_pc_date_month;
+extern int           g_pc_date_day;
+extern int           g_pc_date_year;
+extern int           g_pc_weather_override;
+extern int           g_pc_weather_intensity_override;
+extern u32           g_frame_limiter;
 
 extern int g_pc_window_w;
 extern int g_pc_window_h;
@@ -93,12 +100,6 @@ void pc_platform_shutdown(void);
 void pc_platform_swap_buffers(void);
 int  pc_platform_poll_events(void);
 
-/* --- Crash protection (VEH + setjmp/longjmp) --- */
-void pc_crash_protection_init(void);
-void pc_crash_set_jmpbuf(jmp_buf* buf);  /* NULL to disable */
-unsigned int pc_crash_get_addr(void);
-unsigned int pc_crash_get_data_addr(void);
-
 /* EXE image range for seg2k0 pointer disambiguation (vs N64 segment addresses) */
 extern unsigned int pc_image_base;
 extern unsigned int pc_image_end;
@@ -110,7 +111,6 @@ extern int g_pc_model_viewer_no_cull;
 
 /* --- Per-frame diagnostics --- */
 extern int pc_emu64_frame_cmds;
-extern int pc_emu64_frame_crashes;
 extern int pc_emu64_frame_noop_cmds;
 extern int pc_emu64_frame_tri_cmds;
 extern int pc_emu64_frame_vtx_cmds;
@@ -123,6 +123,7 @@ extern int pc_gx_draw_call_count;
 extern int pc_save_loaded;
 int  pc_audio_get_buffer_fill(void);
 int  pc_audio_is_active(void);
+void pc_audio_set_paused(int paused);
 void pc_audio_shutdown(void);
 void pc_audio_start_producer_thread(void);
 void pc_audio_mq_init(void);

@@ -23,6 +23,7 @@
 #define aIMN_SHAKE_POS_X(ins) ((ins)->f32_work1)
 #define aIMN_SHAKE_POS_Y(ins) ((ins)->f32_work2)
 #define aIMN_BASE_POS_Z(ins) ((ins)->f32_work3)
+#define aIMN_IDLE_TIMER_ACCUM(ins) ((ins)->_258)
 
 enum {
     aIMN_ACT_AVOID,
@@ -122,8 +123,8 @@ static void aIMN_position_move(ACTOR* actorx) {
     f32 counter = aIMN_ANIM_TIME(insect);
 
     xyz_t_move(&actorx->last_world_position, &actorx->world.position);
-    chase_f(&actorx->speed, insect->target_speed, insect->speed_step * 0.5f);
-    counter += actorx->speed * 0.5f;
+    chase_f(&actorx->speed, insect->target_speed, aINS_dt_step((GAME*)gamePT, insect->speed_step * 0.5f));
+    counter += aINS_dt_step((GAME*)gamePT, actorx->speed * 0.5f);
     aIMN_ANIM_TIME(insect) = counter;
     actorx->world.position.y = actorx->home.position.y + cos_s(angleX) * counter;
     actorx->world.position.z = aIMN_BASE_POS_Z(insect) - sin_s(angleX) * counter;
@@ -152,7 +153,7 @@ static void aIMN_calc_shake_angl(ACTOR* actorx) {
         aIMN_TARGET_SHAKE(insect) = target_shake;
     }
 
-    chase_angle(&current_shake, target_shake, 16);
+    chase_angle(&current_shake, target_shake, aINS_dt_angle_step((GAME*)gamePT, 16));
     aIMN_CURRENT_SHAKE(insect) = current_shake;
     angleY += (s16)(current_shake * 0.5f);
     actorx->shape_info.rotation.y = angleY;
@@ -169,7 +170,7 @@ static void aIMN_calc_twist_angl(ACTOR* actorx) {
     aINS_INSECT_ACTOR* insect = (aINS_INSECT_ACTOR*)actorx;
     s16 twist_angl = insect->continue_timer;
 
-    twist_angl += 0x100;
+    twist_angl += aINS_dt_angle_step((GAME*)gamePT, 0x100);
     insect->continue_timer = twist_angl;
     actorx->shape_info.rotation.z = (s16)(sin_s(twist_angl) * DEG2SHORT_ANGLE3(22.5f));
 }
@@ -258,10 +259,11 @@ static void aIMN_calc_direction_angl(ACTOR* actorx) {
 
     switch (insect->type) {
         case aINS_INSECT_TYPE_BAGWORM:
-            chase_angle(&actorx->shape_info.rotation.y, actorx->world.angle.y, 0x800);
+            chase_angle(&actorx->shape_info.rotation.y, actorx->world.angle.y, aINS_dt_angle_step((GAME*)gamePT, 0x800));
             break;
         case aINS_INSECT_TYPE_SPIDER:
-            chase_angle(&actorx->shape_info.rotation.y, actorx->world.angle.y + DEG2SHORT_ANGLE2(-180.0f), 0x800);
+            chase_angle(&actorx->shape_info.rotation.y, actorx->world.angle.y + DEG2SHORT_ANGLE2(-180.0f),
+                        aINS_dt_angle_step((GAME*)gamePT, 0x800));
             break;
     }
 }
@@ -338,7 +340,7 @@ static void aIMN_wait(ACTOR* actorx, GAME* game) {
             aIMN_TARGET_SHAKE(insect) = -0x80;
         }
 
-        insect->timer--;
+        insect->timer -= (f32)game->graph->dt_num_60fps_frames;
         if (insect->timer <= 0) {
             if (aIMN_TARGET_SHAKE(insect) == 0) {
                 actorx->scale.x = 0.01f;
@@ -371,17 +373,21 @@ static void aIMN_wait(ACTOR* actorx, GAME* game) {
             int idx = actorx->actor_specific;
 
             if (idx < 7) {
-                int res0 = chase_f(&actorx->scale.x, scaleX_table[idx], 0.001125f);
-                int res1 = chase_f(&actorx->scale.y, scaleY_table[idx], 0.001125f);
+                int res0 = chase_f(&actorx->scale.x, scaleX_table[idx], aINS_dt_step(game, 0.001125f));
+                int res1 = chase_f(&actorx->scale.y, scaleY_table[idx], aINS_dt_step(game, 0.001125f));
 
                 if ((res0 & res1) == TRUE) {
                     actorx->actor_specific--;
                     if (actorx->actor_specific < 0) {
                         actorx->actor_specific = 0x133 + (s16)(60.0f * RANDOM_F(5.0f));
+                        aIMN_IDLE_TIMER_ACCUM(insect) = 0.0f;
                     }
                 }
             } else {
-                actorx->actor_specific--;
+                int idle_timer = actorx->actor_specific - 6;
+
+                aINS_dt_dec_s32_timer(game, &idle_timer, &aIMN_IDLE_TIMER_ACCUM(insect));
+                actorx->actor_specific = idle_timer + 6;
             }
         }
 
@@ -512,6 +518,7 @@ static void aIMN_wait_init(aINS_INSECT_ACTOR* insect, GAME* game) {
     insect->target_speed = 0.0f;
     insect->speed_step = 0.0f;
     insect->tools_actor.actor_class.actor_specific = 0x133 + (s16)(60.0f * RANDOM_F(5.0f));
+    aIMN_IDLE_TIMER_ACCUM(insect) = 0.0f;
     aIMN_SHAKE_POS_X(insect) = insect->tools_actor.actor_class.world.position.x;
     aIMN_SHAKE_POS_Y(insect) = insect->tools_actor.actor_class.world.position.y;
 }

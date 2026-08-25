@@ -44,20 +44,24 @@ extern void Actor_world_to_eye(ACTOR* actor, f32 eye_height) {
 }
 
 extern void Actor_position_move(ACTOR* actor) {
+    const double dt_frames = gamePT->graph->dt_num_60fps_frames;
+
     (*((GAME_PLAY*)gamePT)->kankyo.nature.proc)(actor);
 
     /* divide by 2 because of 30fps -> 60fps? */
-    actor->world.position.x += 0.5f * actor->position_speed.x + actor->status_data.collision_vec.x;
-    actor->world.position.y += 0.5f * actor->position_speed.y + actor->status_data.collision_vec.y;
-    actor->world.position.z += 0.5f * actor->position_speed.z + actor->status_data.collision_vec.z;
+    actor->world.position.x += (0.5 * dt_frames) * actor->position_speed.x + actor->status_data.collision_vec.x;
+    actor->world.position.y += (0.5 * dt_frames) * actor->position_speed.y + actor->status_data.collision_vec.y;
+    actor->world.position.z += (0.5 * dt_frames) * actor->position_speed.z + actor->status_data.collision_vec.z;
 }
 
 extern void Actor_position_speed_set(ACTOR* actor) {
+    const f32 dt_frames = (f32)gamePT->graph->dt_num_60fps_frames;
+
     actor->position_speed.x = actor->speed * sin_s(actor->world.angle.y);
     actor->position_speed.z = actor->speed * cos_s(actor->world.angle.y);
 
     /* divide by 2 because of 30fps -> 60fps? */
-    chase_f(&actor->position_speed.y, actor->max_velocity_y, 0.5f * actor->gravity);
+    chase_f(&actor->position_speed.y, actor->max_velocity_y, 0.5f * actor->gravity * dt_frames);
 }
 
 extern void Actor_position_moveF(ACTOR* actor) {
@@ -149,10 +153,18 @@ static void Actor_ct(ACTOR* actor, GAME* game) {
     actor->scale.z = 0.01f;
     actor->max_velocity_y = -20.0f;
     actor->player_distance = FLT_MAX; //3.4028235E+38;
-    actor->cull_width = 350.0f;
-    actor->cull_height = 700.0f;
-    actor->cull_distance = 1000.0f;
-    actor->cull_radius = 350.0f;
+    if (g_mPlib_wade_disabled) {
+        /* Reduce the distance otherwise causes crashes */
+        actor->cull_width = 350.0f * 1.5f;
+        actor->cull_height = 700.0f * 1.5f;
+        actor->cull_distance = 1000.0f;
+        actor->cull_radius = 350.0f * 1.5f;
+    } else {
+        actor->cull_width = 350.0f;
+        actor->cull_height = 700.0f;
+        actor->cull_distance = 1000.0f;
+        actor->cull_radius = 350.0f;
+    }
     actor->talk_distance = 55.0f;
     actor->shape_info.shadow_size_change_rate = 1.0f;
     actor->shape_info.shadow_alpha_change_rate = 1.0f;
@@ -314,7 +326,11 @@ static void Actor_delete_check(ACTOR* actor, GAME* game) {
          (ACTOR_STATE_NO_MOVE_WHILE_CULLED | ACTOR_STATE_NO_DRAW_WHILE_CULLED | ACTOR_STATE_NO_CULL)) == 0) {
         if (actor->npc_id != EMPTY_NO) {
             if (actor->block_x >= 0 && actor->block_z >= 0) {
-                if (actor->block_x != play->block_table.block_x || actor->block_z != play->block_table.block_z) {
+                int dx = ABS(actor->block_x - play->block_table.block_x);
+                int dz = ABS(actor->block_z - play->block_table.block_z);
+                int keep_range = g_mPlib_wade_disabled ? 1 : 0;
+
+                if (dx > keep_range || dz > keep_range) {
                     Actor_delete(actor);
                 }
             }

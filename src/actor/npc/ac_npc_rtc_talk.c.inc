@@ -206,7 +206,7 @@ static void aNRTC_change_talk_proc(NPC_RTC_ACTOR* rtc, int idx) {
     rtc->talk_proc = process[idx];
 }
 
-static void aNRTC_set_talk_info_talk_request() {
+static void aNRTC_set_talk_info_talk_request(ACTOR* actor) {
     int msg;
 
     switch (Common_Get(save_error_type)) {
@@ -295,19 +295,19 @@ static int aNRTC_talk_end_chk(ACTOR* actor, GAME* game) {
         rtc->fade_timer = 75;
         bzero(&play->fade_color_value, sizeof(rgba8888_t));
     } else {
-        int counter = rtc->counter;
+        f32 counter = rtc->counter;
 
         if ((mMsg_CHECK_MAINNORMAL() == TRUE) || (mChoice_CHECK_MAIN_NORMAL() == TRUE)) {
-            counter++;
-            if (counter > 600) {
-                counter = 600;
+            counter += (f32)game->graph->dt_num_60fps_frames;
+            if (counter > 600.0f) {
+                counter = 600.0f;
             }
         } else {
-            counter = 0;
+            counter = 0.0f;
         }
 
         if (mDemo_Get_OrderValue(mDemo_TYPE_4, 0) == 0) {
-            if (counter >= 600) {
+            if (counter >= 600.0f) {
                 if (rtc->npc_class.draw.animation_id != aNPC_ANIM_4HAKU_E1) {
                     mDemo_Set_OrderValue(mDemo_TYPE_4, 0, 0xFF);
                 }

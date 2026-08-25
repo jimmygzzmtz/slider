@@ -19,6 +19,8 @@
 #include "m_scene_table.h"
 #include "m_private.h"
 
+extern int Camera2_InDoorCheck(void);
+
 typedef struct watch_my_step_s {
     f32 pos_x;
     f32 pos_y;
@@ -30,7 +32,7 @@ typedef struct watch_my_step_s {
 
     f32 scale;
 
-    s16 timer;
+    f32 timer;
 
     mActor_name_t item_no;
 
@@ -43,7 +45,7 @@ static mWt_watch_my_step_c S_watch_my_step;
 
 typedef struct navigate_s {
     f32 opacity;
-    s16 timer;
+    f32 timer;
     u8 mode;
     u8 draw_type;
 } mWt_navigate_c;
@@ -53,7 +55,8 @@ static mWt_navigate_c S_navigate;
 typedef struct mybell_confirmation_s {
     f32 opacity;
     u32 all_money;
-    s16 coin_sfx_timer;
+    f32 money_accum;
+    f32 coin_sfx_timer;
     u8 mode;
     u8 draw_type;
     u8 update_money;
@@ -87,7 +90,7 @@ extern void watch_my_step_move(GAME_PLAY* play) {
             case 0: {
                 if (window_item != EMPTY_NO && !can_show) {
                     S_watch_my_step.opacity = 0.0f;
-                    S_watch_my_step.timer = 2;
+                    S_watch_my_step.timer = 2.0f;
                     S_watch_my_step.mode++;
                 }
                 break;
@@ -95,8 +98,9 @@ extern void watch_my_step_move(GAME_PLAY* play) {
 
             case 1:
             case 2: {
-                if (S_watch_my_step.timer-- == 0) {
-                    S_watch_my_step.timer = 2;
+                S_watch_my_step.timer -= (f32)play->game.graph->dt_num_60fps_frames;
+                if (S_watch_my_step.timer <= 0.0f) {
+                    S_watch_my_step.timer = 2.0f;
                     S_watch_my_step.mode++;
                 }
                 break;
@@ -295,8 +299,9 @@ static void navigate_camera_move(GAME_PLAY* play) {
 
     switch (S_navigate.mode) {
         case 0: {
-            if (mPlib_check_able_change_camera_normal_index() != 0 && play->fb_fade_type == FADE_TYPE_NONE) {
-                S_navigate.timer = 150;
+            // always hide camera controls popup when outdoors or when can't control camera
+            if (mPlib_check_able_change_camera_normal_index() != 0 && play->fb_fade_type == FADE_TYPE_NONE && Camera2_InDoorCheck()) {
+                S_navigate.timer = 150.0f;
                 S_navigate.mode++;
             }
             break;
@@ -304,9 +309,9 @@ static void navigate_camera_move(GAME_PLAY* play) {
 
         case 1: {
             add_calc(&S_navigate.opacity, 1.0f, 1.0f - sqrtf(0.8), 0.075f, 0.005f);
-            S_navigate.timer--;
+            S_navigate.timer -= (f32)play->game.graph->dt_num_60fps_frames;
 
-            if (S_navigate.timer == 0 || play->submenu.process_status != mSM_PROCESS_WAIT ||
+            if (S_navigate.timer <= 0.0f || play->submenu.process_status != mSM_PROCESS_WAIT ||
                 mMsg_Check_MainHide(mMsg_Get_base_window_p()) == FALSE) {
                 S_navigate.mode++;
             }
@@ -410,7 +415,7 @@ static void mWt_set_coin_se(int play_flag) {
         sAdo_SysLevStart(NA_SE_COIN);
         S_mybell_conf.update_money = TRUE;
         S_mybell_conf.play_finish_sfx = FALSE;
-        S_mybell_conf.coin_sfx_timer = 300;
+        S_mybell_conf.coin_sfx_timer = 300.0f;
     }
 
     S_se_play_flg = play_flag;
@@ -440,8 +445,9 @@ static void mWt_mybell_confirmation_move(GAME_PLAY* play) {
         S_mybell_conf.play_finish_sfx = FALSE;
     }
 
-    if (S_mybell_conf.coin_sfx_timer != 0) {
-        if (--S_mybell_conf.coin_sfx_timer <= 0) {
+    if (S_mybell_conf.coin_sfx_timer > 0.0f) {
+        S_mybell_conf.coin_sfx_timer -= (f32)play->game.graph->dt_num_60fps_frames;
+        if (S_mybell_conf.coin_sfx_timer <= 0.0f) {
             mWt_set_coin_se(FALSE);
         }
     }
@@ -456,6 +462,7 @@ static void mWt_mybell_confirmation_move(GAME_PLAY* play) {
         (i <= 4 && Common_Get(tanuki_shop_status) == mSP_TANUKI_SHOP_STATUS_FUKUBIKI)) {
         if (S_mybell_conf.update_money == TRUE) {
             S_mybell_conf.all_money = get_all_money();
+            S_mybell_conf.money_accum = 0.0f;
             mWt_set_coin_se(FALSE);
         }
 
@@ -470,10 +477,11 @@ static void mWt_mybell_confirmation_move(GAME_PLAY* play) {
             }
 
             case 1: {
-                f32 money = S_mybell_conf.all_money;
+                f32 money = (f32)S_mybell_conf.all_money + S_mybell_conf.money_accum;
                 u32 now_money = get_all_money();
+                f32 now_money_f = (f32)now_money;
 
-                if (S_mybell_conf.all_money != now_money) {
+                if (money != now_money_f) {
                     mWt_set_coin_se(TRUE);
                 }
 
@@ -482,15 +490,17 @@ static void mWt_mybell_confirmation_move(GAME_PLAY* play) {
                 }
 
                 if ((S_mybell_conf.update_money == TRUE) &&
-                    (S_mybell_conf.all_money == now_money || S_mybell_conf.mode == 2)) {
+                    (money == now_money_f || S_mybell_conf.mode == 2)) {
                     mWt_set_coin_se(FALSE);
-                    if (S_mybell_conf.all_money == now_money) {
+                    if (money == now_money_f) {
                         S_mybell_conf.play_finish_sfx = TRUE;
                     }
                 }
 
-                add_calc(&money, now_money, 0.1f, 10000.0f, 1.0f);
-                S_mybell_conf.all_money = money;
+                add_calc(&money, now_money_f, 0.1f, 10000.0f, 1.0f);
+                S_mybell_conf.all_money = (u32)money;
+                /* Keep sub-Bell dt movement instead of losing it to the integer display value. */
+                S_mybell_conf.money_accum = money - (f32)S_mybell_conf.all_money;
                 add_calc(&S_mybell_conf.opacity, 1.0f, 1.0f - sqrtf(0.8), 0.075f, 0.005f);
                 S_mybell_conf.draw_type = 1;
                 break;

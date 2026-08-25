@@ -21,10 +21,10 @@ struct actor_npc_rtc_s {
     int talk_flag;
     int unk9A4;
     int think_idx;
-    int counter;
-    int fade_timer;
-    int bgm_timer;
-    int first_talk_timer;
+    f32 counter;
+    f32 fade_timer;
+    f32 bgm_timer;
+    f32 first_talk_timer;
 };
 
 extern ACTOR_PROFILE Npc_Rtc_Profile;

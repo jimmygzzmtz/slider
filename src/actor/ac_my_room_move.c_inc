@@ -984,6 +984,8 @@ static int aMR_CheckDiaryOnMe(FTR_ACTOR* ftr_actor, GAME* game) {
     return FALSE;
 }
 
+static void aMR_AdvanceRoomTimer(s16* timer, f32* accum, GAME* game, s16 max);
+
 static int aMR_ManageMoveBottun(MY_ROOM_ACTOR* my_room, GAME* game, aMR_contact_info_c* contact_info0,
                                 aMR_contact_info_c* contact_info1) {
     aMR_contact_info_c* contact;
@@ -1030,16 +1032,17 @@ static int aMR_ManageMoveBottun(MY_ROOM_ACTOR* my_room, GAME* game, aMR_contact_
                                               &nice_pos)) {
                 my_room->state = 1;
                 my_room->switch_timer = 0;
+                my_room->switch_timer_accum = 0.0f;
             }
         }
     } else if (chkButton(BUTTON_A) && !chkTrigger(BUTTON_B) && !chkTrigger(BUTTON_B) && my_room->demo_flag == FALSE &&
                my_room->msg_type == aMR_MSG_STATE_NONE) {
         if (my_room->state == 1 || my_room->state == 6) {
-            if (my_room->switch_timer < 14) {
-                my_room->switch_timer++;
-            }
+            aMR_AdvanceRoomTimer(&my_room->switch_timer, &my_room->switch_timer_accum, game, 14);
         }
     } else if (!chkButton(BUTTON_A) && my_room->demo_flag == FALSE && my_room->msg_type == aMR_MSG_STATE_NONE) {
+        my_room->switch_timer_accum = 0.0f;
+
         if (my_room->state == 1 || my_room->state == 6) {
             if (my_room->switch_timer < 14) {
                 field_type = Common_GetPointer(field_type);
@@ -1193,11 +1196,32 @@ static int aMR_ManageMoveBottun(MY_ROOM_ACTOR* my_room, GAME* game, aMR_contact_
     if (my_room->state == 0) {
         my_room->push_timer = 0;
         my_room->pull_timer = 0;
+        my_room->push_timer_accum = 0.0f;
+        my_room->pull_timer_accum = 0.0f;
         my_room->keep_push_flag = FALSE;
         my_room->keep_pull_flag = FALSE;
     }
 
     return FALSE;
+}
+
+static void aMR_AdvanceRoomTimer(s16* timer, f32* accum, GAME* game, s16 max) {
+    if (*timer < max) {
+        int ticks;
+
+        *accum += (f32)game->graph->dt_num_60fps_frames;
+        ticks = (int)*accum;
+
+        if (ticks > 0) {
+            *accum -= (f32)ticks;
+            *timer += ticks;
+
+            if (*timer > max) {
+                *timer = max;
+                *accum = 0.0f;
+            }
+        }
+    }
 }
 
 static int aMR_PullDirect2PushDirect(int pull_direct) {
@@ -1220,6 +1244,7 @@ static void aMR_MngPullDirectTimer(MY_ROOM_ACTOR* my_room, aMR_contact_info_c* c
     if (my_room->pull_bubu == TRUE) {
         if (aMR_Get3dDirectStatus(contact_info->direction) != 1) {
             my_room->pull_timer = 0;
+            my_room->pull_timer_accum = 0.0f;
             my_room->state = 6;
             my_room->pull_bubu = FALSE;
             return;
@@ -1232,17 +1257,17 @@ static void aMR_MngPullDirectTimer(MY_ROOM_ACTOR* my_room, aMR_contact_info_c* c
         if (aMR_Get3dDirectStatus(contact_info->direction) == 1) {
             if (my_room->state == 6 && my_room->keep_pull_flag == TRUE) {
                 my_room->pull_timer = 0;
+                my_room->pull_timer_accum = 0.0f;
                 my_room->keep_pull_flag = FALSE;
                 my_room->state = 8;
             }
 
             if (my_room->pull_timer == 0 && my_room->state == 6) {
                 my_room->state = 8;
-                my_room->pull_timer++;
             }
 
             if (my_room->state == 8) {
-                my_room->pull_timer++;
+                aMR_AdvanceRoomTimer(&my_room->pull_timer, &my_room->pull_timer_accum, game, 20000);
             }
         } else if (my_room->state == 6) {
             my_room->keep_pull_flag = FALSE;
@@ -1250,11 +1275,13 @@ static void aMR_MngPullDirectTimer(MY_ROOM_ACTOR* my_room, aMR_contact_info_c* c
             my_room->keep_pull_flag = FALSE;
             my_room->state = 6;
             my_room->pull_timer = 0;
+            my_room->pull_timer_accum = 0.0f;
         }
     }
 
     if (my_room->state == 3 || my_room->state == 2 || my_room->state == 4 || my_room->state == 1) {
         my_room->pull_timer = 0;
+        my_room->pull_timer_accum = 0.0f;
     }
 }
 
@@ -1267,6 +1294,7 @@ static void aMR_MngPushDirectTimer(MY_ROOM_ACTOR* my_room, aMR_contact_info_c* c
     if (my_room->push_bubu == TRUE) {
         if (aMR_JudgeStickFull(aMR_PullDirect2PushDirect(contact_info->direction), game) == FALSE) {
             my_room->push_timer = 0;
+            my_room->push_timer_accum = 0.0f;
             my_room->state = 6;
             my_room->push_bubu = FALSE;
             return;
@@ -1279,17 +1307,17 @@ static void aMR_MngPushDirectTimer(MY_ROOM_ACTOR* my_room, aMR_contact_info_c* c
         if (aMR_JudgeStickFull(aMR_PullDirect2PushDirect(contact_info->direction), game)) {
             if (my_room->state == 6 && my_room->keep_push_flag == TRUE) {
                 my_room->push_timer = 0;
+                my_room->push_timer_accum = 0.0f;
                 my_room->keep_push_flag = FALSE;
                 my_room->state = 7;
             }
 
             if (my_room->push_timer == 0 && my_room->state == 6) {
                 my_room->state = 7;
-                my_room->push_timer++;
             }
 
             if (my_room->state == 7) {
-                my_room->push_timer++;
+                aMR_AdvanceRoomTimer(&my_room->push_timer, &my_room->push_timer_accum, game, 20000);
             }
         } else if (my_room->state == 6) {
             my_room->keep_push_flag = FALSE;
@@ -1297,11 +1325,13 @@ static void aMR_MngPushDirectTimer(MY_ROOM_ACTOR* my_room, aMR_contact_info_c* c
             my_room->keep_push_flag = FALSE;
             my_room->state = 6;
             my_room->push_timer = 0;
+            my_room->push_timer_accum = 0.0f;
         }
     }
 
     if (my_room->state == 2 || my_room->state == 3 || my_room->state == 4 || my_room->state == 1) {
         my_room->push_timer = 0;
+        my_room->push_timer_accum = 0.0f;
     }
 }
 
@@ -1552,6 +1582,9 @@ static int aMR_ReserveFurniture(GAME* game, u16 ftr_no, int free_idx, int ut_x, 
                 my_room->rsv_ftr[i].layer = layer;
                 my_room->rsv_ftr[i].frames = 46;
                 my_room->rsv_ftr[i].initial_frames_num = 46;
+#ifdef TARGET_PC
+                my_room->rsv_ftr[i].frame_accum = 0.0f;
+#endif
                 my_room->rsv_ftr[i].ut_x = ut_x;
                 my_room->rsv_ftr[i].ut_z = ut_z;
 
@@ -2338,6 +2371,9 @@ static void aMR_FtrRotate(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_ro
     f32 rotate_amount = aMR_GetEllipseSpeed(ftr_actor->angle_y, ftr_actor->angle_y_target, 5.6f, 90.0f);
     f32 delta_angle = ABS(ftr_actor->angle_y - ftr_actor->angle_y_target);
 
+    /* Preserve the original 60 Hz furniture rotation speed on the PC frame loop. */
+    rotate_amount *= (f32)game->graph->dt_num_60fps_frames;
+
     if (delta_angle <= rotate_amount + 1.0f) {
         ftr_actor->angle_y = ftr_actor->angle_y_target;
         ftr_actor->state = aFTR_STATE_STOP;
@@ -2360,10 +2396,11 @@ static void aMR_FtrRotate(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_ro
 
 static void aMR_BirthWait(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_room) {
     f32 scale = ftr_actor->collision_scale;
+    f32 dt = (f32)game->graph->dt_num_60fps_frames;
     int i;
 
     if (ftr_actor->collision_scale < 1.0f) {
-        ftr_actor->collision_scale = scale + ((f32)GETREG(MYKREG, 89) * 0.01f + 0.05f);
+        ftr_actor->collision_scale = scale + (((f32)GETREG(MYKREG, 89) * 0.01f + 0.05f) * dt);
     } else if (ftr_actor->collision_scale > 1.0f) {
         ftr_actor->collision_scale = 1.0f;
     } else {
@@ -2384,6 +2421,8 @@ static void aMR_BirthWait(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_ro
 
 static void aMR_FtrBirth(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_room) {
     static xyz_t scale1 = { 1.0f, 1.0f, 1.0f };
+    f32 dt = (f32)game->graph->dt_num_60fps_frames;
+    f32 prev_dust_timer = ftr_actor->dust_timer_f;
     f32 scale_y;
     f32 scale_xz;
     s16 now_counter;
@@ -2395,15 +2434,23 @@ static void aMR_FtrBirth(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_roo
     xyz_t pos3;
 
     if (ftr_actor->collision_scale < 1.0f) {
-        ftr_actor->collision_scale = ftr_actor->collision_scale + ((f32)GETREG(MYKREG, 89) * 0.01f + 0.05f);
+        ftr_actor->collision_scale =
+            ftr_actor->collision_scale + (((f32)GETREG(MYKREG, 89) * 0.01f + 0.05f) * dt);
     } else if (ftr_actor->collision_scale > 1.0f) {
         ftr_actor->collision_scale = 1.0f;
     } else {
         ftr_actor->collision_scale = ftr_actor->collision_scale;
     }
 
-    ftr_actor->birth_anim_counter += ftr_actor->birth_anim_step;
-    now_counter = ftr_actor->birth_anim_counter;
+    ftr_actor->birth_anim_counter_f += (f32)ftr_actor->birth_anim_step * dt;
+    while (ftr_actor->birth_anim_counter_f >= 32768.0f) {
+        ftr_actor->birth_anim_counter_f -= 65536.0f;
+    }
+    while (ftr_actor->birth_anim_counter_f < -32768.0f) {
+        ftr_actor->birth_anim_counter_f += 65536.0f;
+    }
+    now_counter = (s16)ftr_actor->birth_anim_counter_f;
+    ftr_actor->birth_anim_counter = now_counter;
     scale_y = sinf_table(SHORT2RAD_ANGLE2(now_counter)) * ftr_actor->birth_scale_modifier;
     scale_xz = 1.0f - scale_y;
     scale_y += 1.0f;
@@ -2412,7 +2459,10 @@ static void aMR_FtrBirth(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_roo
     ftr_actor->scale.y = scale_y;
     ftr_actor->scale.z = scale_xz;
 
-    if (ftr_actor->dust_timer == 2) {
+    ftr_actor->dust_timer_f += dt;
+    ftr_actor->dust_timer = (s16)ftr_actor->dust_timer_f;
+
+    if (prev_dust_timer < 2.0f && ftr_actor->dust_timer_f >= 2.0f) {
         aMR_GetDust4Position(&pos0, &pos1, &pos2, &pos3, &center, ftr_actor);
 
         if (eEC_CLIP != NULL) {
@@ -2428,7 +2478,7 @@ static void aMR_FtrBirth(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_roo
             vec.z = pos2.z - center.z;
             eEC_CLIP->effect_make_proc(eEC_EFFECT_DUST, pos2, 2, aMR_GetDustAngle(&vec), game, RSV_NO, 0, 4);
         }
-    } else if (ftr_actor->dust_timer == 6) {
+    } else if (prev_dust_timer < 6.0f && ftr_actor->dust_timer_f >= 6.0f) {
         aMR_GetDust4Position(&pos0, &pos1, &pos2, &pos3, &center, ftr_actor);
 
         if (eEC_CLIP != NULL) {
@@ -2446,7 +2496,6 @@ static void aMR_FtrBirth(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_roo
         }
     }
 
-    ftr_actor->dust_timer++;
     if ((prev_counter < 0 && now_counter >= 0) || (prev_counter < -0x8000 && now_counter >= -0x8000)) {
         ftr_actor->birth_scale_modifier *= 0.4f;
         ftr_actor->birth_anim_step += 1500;
@@ -2554,19 +2603,35 @@ static void aMR_FtrDeath(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_roo
 }
 
 static void aMR_FtrWaitRrotate(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_room) {
-    if (ftr_actor->rotation_delay_timer <= 0) {
-        ftr_actor->state = aFTR_STATE_RROTATE;
-    }
+#ifdef TARGET_PC
+    int ticks = graph_dt_60hz_ticks(game, &ftr_actor->rotation_delay_accum);
+#else
+    int ticks = 1;
+#endif
 
-    ftr_actor->rotation_delay_timer--;
+    while (ticks-- > 0) {
+        if (ftr_actor->rotation_delay_timer <= 0) {
+            ftr_actor->state = aFTR_STATE_RROTATE;
+        }
+
+        ftr_actor->rotation_delay_timer--;
+    }
 }
 
 static void aMR_FtrWaitLrotate(FTR_ACTOR* ftr_actor, GAME* game, MY_ROOM_ACTOR* my_room) {
-    if (ftr_actor->rotation_delay_timer <= 0) {
-        ftr_actor->state = aFTR_STATE_LROTATE;
-    }
+#ifdef TARGET_PC
+    int ticks = graph_dt_60hz_ticks(game, &ftr_actor->rotation_delay_accum);
+#else
+    int ticks = 1;
+#endif
 
-    ftr_actor->rotation_delay_timer--;
+    while (ticks-- > 0) {
+        if (ftr_actor->rotation_delay_timer <= 0) {
+            ftr_actor->state = aFTR_STATE_LROTATE;
+        }
+
+        ftr_actor->rotation_delay_timer--;
+    }
 }
 
 static void aMR_GetItemPosOnMovingFurniture(MY_ROOM_ACTOR* my_room, FTR_ACTOR* ftr_actor) {
@@ -2601,6 +2666,11 @@ static void aMR_FurnitureMoveFunction(ACTOR* actorx, GAME* game) {
     MY_ROOM_ACTOR* my_room = (MY_ROOM_ACTOR*)actorx;
     FTR_ACTOR* ftr_actor = l_aMR_work.ftr_actor_list;
     u8* used = l_aMR_work.used_list;
+#ifdef TARGET_PC
+    int tex_anim_ticks = graph_dt_60hz_ticks(game, &my_room->tex_animation_accum);
+#else
+    int tex_anim_ticks = 1;
+#endif
 
     static aMR_FPROC fproc[aFTR_STATE_NUM] = {
         &aMR_FtrStop,        &aMR_FtrWaitPush, &aMR_FtrWaitPush2,   &aMR_FtrWaitPush3,
@@ -2614,6 +2684,9 @@ static void aMR_FurnitureMoveFunction(ACTOR* actorx, GAME* game) {
             aFTR_PROFILE* profile = aMR_GetFurnitureProfile(ftr_actor->name);
 
             if (profile != NULL) {
+#ifdef TARGET_PC
+                ftr_actor->texture_scroll_frame += (f32)game->graph->dt_num_60fps_frames;
+#endif
                 (*fproc[ftr_actor->state])(ftr_actor, game, my_room);
                 ftr_actor->s_angle_y = RAD2SHORT_ANGLE2(DEG2RAD(ftr_actor->angle_y));
 
@@ -2626,10 +2699,13 @@ static void aMR_FurnitureMoveFunction(ACTOR* actorx, GAME* game) {
 
                 if (profile->tex_anim != NULL) {
                     int count = profile->tex_anim->animation_count;
+                    int tick;
 
-                    ftr_actor->tex_animation.frame++;
-                    if (ftr_actor->tex_animation.frame >= count || ftr_actor->tex_animation.frame < 0) {
-                        ftr_actor->tex_animation.frame = 0;
+                    for (tick = 0; tick < tex_anim_ticks; tick++) {
+                        ftr_actor->tex_animation.frame++;
+                        if (ftr_actor->tex_animation.frame >= count || ftr_actor->tex_animation.frame < 0) {
+                            ftr_actor->tex_animation.frame = 0;
+                        }
                     }
                 }
 
@@ -2674,43 +2750,54 @@ static void aMR_SetReserveFurniture(MY_ROOM_ACTOR* my_room, GAME* game) {
     if (play->submenu.process_status == mSM_PROCESS_WAIT) {
         for (i = 0; i < aMR_RSV_FTR_NUM; i++) {
             if (my_room->rsv_ftr[i].exist_flag) {
-                if (my_room->rsv_ftr[i].frames == my_room->rsv_ftr[i].initial_frames_num) {
-                    u16 ftr_no = my_room->rsv_ftr[i].ftr_name;
-                    mActor_name_t item = aMR_GetBirthFurniture(ftr_no, my_room->rsv_ftr[i].angle_idx);
+#ifdef TARGET_PC
+                int ticks = graph_dt_60hz_ticks(game, &my_room->rsv_ftr[i].frame_accum);
+#else
+                int ticks = 1;
+#endif
+                int tick;
 
-                    if (aMR_GetFurnitureBank2(ftr_no, game, item)) {
-                        if (my_room->rsv_ftr[i].free_no != -1) {
-                            used[my_room->rsv_ftr[i].free_no] = TRUE;
-                            aMR_FurnitureCt(ftr_actor + my_room->rsv_ftr[i].free_no, game, my_room->rsv_ftr[i].ut_x,
-                                            my_room->rsv_ftr[i].ut_z, item, my_room->rsv_ftr[i].free_no,
-                                            aFTR_STATE_BIRTH_WAIT, my_room->rsv_ftr[i].layer, TRUE);
-                            aMR_PlussWeight(actorx, &ftr_actor[my_room->rsv_ftr[i].free_no]);
-                            mMkRm_ReportChangePlayerRoom();
+                for (tick = 0; tick < ticks && my_room->rsv_ftr[i].exist_flag; tick++) {
+                    if (my_room->rsv_ftr[i].frames == my_room->rsv_ftr[i].initial_frames_num) {
+                        u16 ftr_no = my_room->rsv_ftr[i].ftr_name;
+                        mActor_name_t item = aMR_GetBirthFurniture(ftr_no, my_room->rsv_ftr[i].angle_idx);
+
+                        if (aMR_GetFurnitureBank2(ftr_no, game, item)) {
+                            if (my_room->rsv_ftr[i].free_no != -1) {
+                                used[my_room->rsv_ftr[i].free_no] = TRUE;
+                                aMR_FurnitureCt(ftr_actor + my_room->rsv_ftr[i].free_no, game,
+                                                my_room->rsv_ftr[i].ut_x, my_room->rsv_ftr[i].ut_z, item,
+                                                my_room->rsv_ftr[i].free_no, aFTR_STATE_BIRTH_WAIT,
+                                                my_room->rsv_ftr[i].layer, TRUE);
+                                aMR_PlussWeight(actorx, &ftr_actor[my_room->rsv_ftr[i].free_no]);
+                                mMkRm_ReportChangePlayerRoom();
+                            } else {
+                                my_room->rsv_ftr[i].exist_flag = FALSE;
+                            }
                         } else {
                             my_room->rsv_ftr[i].exist_flag = FALSE;
                         }
-                    } else {
+                    } else if (my_room->rsv_ftr[i].frames <= 0) {
                         my_room->rsv_ftr[i].exist_flag = FALSE;
-                    }
-                } else if (my_room->rsv_ftr[i].frames <= 0) {
-                    my_room->rsv_ftr[i].exist_flag = FALSE;
-                } else if (my_room->rsv_ftr[i].frames + 1 == my_room->rsv_ftr[i].initial_frames_num) {
-                    int ftrID = my_room->rsv_ftr[i].free_no;
-                    mActor_name_t item = mRmTp_FtrIdx2FtrItemNo(my_room->rsv_ftr[i].ftr_name, mRmTp_DIRECT_SOUTH);
-                    s16 icon_no = aMR_ItemNo2IconNo(item);
+                    } else if (my_room->rsv_ftr[i].frames + 1 == my_room->rsv_ftr[i].initial_frames_num) {
+                        int ftrID = my_room->rsv_ftr[i].free_no;
+                        mActor_name_t item =
+                            mRmTp_FtrIdx2FtrItemNo(my_room->rsv_ftr[i].ftr_name, mRmTp_DIRECT_SOUTH);
+                        s16 icon_no = aMR_ItemNo2IconNo(item);
 
-                    if (ftrID != -1) {
-                        xyz_t effect_pos;
+                        if (ftrID != -1) {
+                            xyz_t effect_pos;
 
-                        aMR_GetFtrShapeCenter(&effect_pos, &l_aMR_work.ftr_actor_list[ftrID]);
-                        if (eEC_CLIP != NULL) {
-                            eEC_CLIP->effect_make_proc(eEC_EFFECT_KAGU_HAPPA, effect_pos, 2, 0, game, RSV_NO, icon_no,
-                                                       0);
+                            aMR_GetFtrShapeCenter(&effect_pos, &l_aMR_work.ftr_actor_list[ftrID]);
+                            if (eEC_CLIP != NULL) {
+                                eEC_CLIP->effect_make_proc(eEC_EFFECT_KAGU_HAPPA, effect_pos, 2, 0, game, RSV_NO,
+                                                           icon_no, 0);
+                            }
                         }
                     }
-                }
 
-                my_room->rsv_ftr[i].frames--;
+                    my_room->rsv_ftr[i].frames--;
+                }
             }
         }
     }
@@ -2829,25 +2916,31 @@ static void aMR_HouseOtherMove(u32 player_no, ACTOR* actorx, GAME* game) {
     aMR_CheckControllerNeutral(my_room);
 }
 
-static void aMR_MakeClockInfo(MY_ROOM_ACTOR* my_room, GAME* game) {
-    GAME_PLAY* play = (GAME_PLAY*)game;
+static int aMR_ClockCrossedFrame(f32 prev, f32 now, f32 target) {
+    if (prev <= now) {
+        return prev < target && now >= target;
+    }
 
-    my_room->clock_info.frame = play->game_frame % 120;
+    return prev < target || now >= target;
+}
+
+static void aMR_MakeClockInfo(MY_ROOM_ACTOR* my_room, GAME* game) {
+    f32 prev_frame = my_room->clock_info.phase_frame;
+    f32 frame = prev_frame + (f32)game->graph->dt_num_60fps_frames;
+
+    while (frame >= 120.0f) {
+        frame -= 120.0f;
+    }
+
+    my_room->clock_info.phase_frame = frame;
+    my_room->clock_info.frame = (int)frame;
     my_room->clock_info.tick0 = FALSE;
     my_room->clock_info.tick1 = FALSE;
     my_room->clock_info.tick_stop = FALSE;
 
-    switch (my_room->clock_info.frame) {
-        case 0:
-            my_room->clock_info.tick_stop = TRUE;
-            break;
-        case 15:
-            my_room->clock_info.tick0 = TRUE;
-            break;
-        case 45:
-            my_room->clock_info.tick1 = TRUE;
-            break;
-    }
+    my_room->clock_info.tick_stop = aMR_ClockCrossedFrame(prev_frame, frame, 0.0f);
+    my_room->clock_info.tick0 = aMR_ClockCrossedFrame(prev_frame, frame, 15.0f);
+    my_room->clock_info.tick1 = aMR_ClockCrossedFrame(prev_frame, frame, 45.0f);
 }
 
 static u16 aMR_Fname2ConpoIndex(u16 fname) {

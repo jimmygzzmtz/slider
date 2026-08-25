@@ -1,5 +1,6 @@
 /* pc_gx.c - GX API → OpenGL 3.3: state management, vertex submission, draw dispatch */
 #include "pc_gx_internal.h"
+#include "pc_profiler.h"
 #include <stddef.h>
 static GLushort quad_index_buf[(PC_GX_MAX_VERTS / 4) * 6];
 #include <math.h>
@@ -12,6 +13,40 @@ void GXSetTevColorOp(u32 stage, u32 op, u32 bias, u32 scale, GXBool clamp, u32 o
 void GXSetTevAlphaOp(u32 stage, u32 op, u32 bias, u32 scale, GXBool clamp, u32 out_reg);
 
 typedef struct { u8 r, g, b, a; } GXColor;
+
+#undef glUniform1i
+#undef glUniform2i
+#undef glUniform3i
+#undef glUniform4i
+#undef glUniform1f
+#undef glUniform2f
+#undef glUniform3f
+#undef glUniform4f
+#undef glUniform1iv
+#undef glUniform2iv
+#undef glUniform3iv
+#undef glUniform4iv
+#undef glUniform4fv
+#undef glUniform3fv
+#undef glUniformMatrix3fv
+#undef glUniformMatrix4fv
+
+#define glUniform1i(...)        (pc_profiler_add_count_uniform(), glad_glUniform1i(__VA_ARGS__))
+#define glUniform2i(...)        (pc_profiler_add_count_uniform(), glad_glUniform2i(__VA_ARGS__))
+#define glUniform3i(...)        (pc_profiler_add_count_uniform(), glad_glUniform3i(__VA_ARGS__))
+#define glUniform4i(...)        (pc_profiler_add_count_uniform(), glad_glUniform4i(__VA_ARGS__))
+#define glUniform1f(...)        (pc_profiler_add_count_uniform(), glad_glUniform1f(__VA_ARGS__))
+#define glUniform2f(...)        (pc_profiler_add_count_uniform(), glad_glUniform2f(__VA_ARGS__))
+#define glUniform3f(...)        (pc_profiler_add_count_uniform(), glad_glUniform3f(__VA_ARGS__))
+#define glUniform4f(...)        (pc_profiler_add_count_uniform(), glad_glUniform4f(__VA_ARGS__))
+#define glUniform1iv(...)       (pc_profiler_add_count_uniform(), glad_glUniform1iv(__VA_ARGS__))
+#define glUniform2iv(...)       (pc_profiler_add_count_uniform(), glad_glUniform2iv(__VA_ARGS__))
+#define glUniform3iv(...)       (pc_profiler_add_count_uniform(), glad_glUniform3iv(__VA_ARGS__))
+#define glUniform4iv(...)       (pc_profiler_add_count_uniform(), glad_glUniform4iv(__VA_ARGS__))
+#define glUniform4fv(...)       (pc_profiler_add_count_uniform(), glad_glUniform4fv(__VA_ARGS__))
+#define glUniform3fv(...)       (pc_profiler_add_count_uniform(), glad_glUniform3fv(__VA_ARGS__))
+#define glUniformMatrix3fv(...) (pc_profiler_add_count_uniform(), glad_glUniformMatrix3fv(__VA_ARGS__))
+#define glUniformMatrix4fv(...) (pc_profiler_add_count_uniform(), glad_glUniformMatrix4fv(__VA_ARGS__))
 
 /* --- Global GX State --- */
 PCGXState g_gx;
@@ -134,6 +169,85 @@ static int pc_tex_mtx_id_to_slot(int id) {
     return -1;
 }
 
+static GLint pc_gx_get_uniform_location_profiled(GLuint shader, const char* name) {
+    Uint64 t = pc_profiler_begin_timer();
+    GLint loc = glGetUniformLocation(shader, name);
+    pc_profiler_add_time(PC_PROF_TIMER_UNIFORM_LOOKUP, t);
+    pc_profiler_add_count_uniform_lookup();
+    return loc;
+}
+
+static void pc_gx_use_program_profiled(GLuint shader) {
+    Uint64 t = pc_profiler_begin_timer();
+    glUseProgram(shader);
+    pc_profiler_add_time(PC_PROF_TIMER_SHADER_SWITCH, t);
+    pc_profiler_add_count_shader_switch();
+}
+
+#ifndef PC_GX_ENABLE_TEXTURE_BIND_CACHE
+#define PC_GX_ENABLE_TEXTURE_BIND_CACHE 0
+#endif
+
+#if PC_GX_ENABLE_TEXTURE_BIND_CACHE
+#define PC_GX_MAX_TEXTURE_UNITS 8
+static int s_active_texture_unit = -1;
+static GLuint s_bound_texture_2d[PC_GX_MAX_TEXTURE_UNITS];
+#endif
+
+void pc_gx_texture_bind_cache_invalidate(void) {
+#if PC_GX_ENABLE_TEXTURE_BIND_CACHE
+    s_active_texture_unit = -1;
+    memset(s_bound_texture_2d, 0, sizeof(s_bound_texture_2d));
+#endif
+}
+
+static void pc_gx_active_texture_cached(GLenum texture) {
+#if PC_GX_ENABLE_TEXTURE_BIND_CACHE
+    int unit = (int)(texture - GL_TEXTURE0);
+    if (unit < 0 || unit >= PC_GX_MAX_TEXTURE_UNITS) {
+        glActiveTexture(texture);
+        s_active_texture_unit = -1;
+        return;
+    }
+    if (s_active_texture_unit == unit) return;
+    glActiveTexture(texture);
+    s_active_texture_unit = unit;
+#else
+    glActiveTexture(texture);
+#endif
+}
+
+static void pc_gx_bind_texture_profiled(GLenum target, GLuint texture) {
+#if PC_GX_ENABLE_TEXTURE_BIND_CACHE
+    int unit = s_active_texture_unit;
+    if (target == GL_TEXTURE_2D && unit >= 0 && unit < PC_GX_MAX_TEXTURE_UNITS &&
+        s_bound_texture_2d[unit] == texture) {
+        return;
+    }
+
+    Uint64 t = pc_profiler_begin_timer();
+    glBindTexture(target, texture);
+    pc_profiler_add_time(PC_PROF_TIMER_TEXTURE_BIND, t);
+    pc_profiler_add_count_texture_bind();
+
+    if (target == GL_TEXTURE_2D && unit >= 0 && unit < PC_GX_MAX_TEXTURE_UNITS) {
+        s_bound_texture_2d[unit] = texture;
+    }
+#else
+    Uint64 t = pc_profiler_begin_timer();
+    glBindTexture(target, texture);
+    pc_profiler_add_time(PC_PROF_TIMER_TEXTURE_BIND, t);
+    pc_profiler_add_count_texture_bind();
+#endif
+}
+
+static void pc_gx_buffer_data_profiled(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
+    Uint64 t = pc_profiler_begin_timer();
+    glBufferData(target, size, data, usage);
+    pc_profiler_add_time(PC_PROF_TIMER_BUFFER_UPLOAD, t);
+    pc_profiler_add_count_buffer_upload((size_t)size);
+}
+
 /* Commit pending vertex + flush batch to GL. Used by GXBegin/GXEnd/GXCopyDisp/etc. */
 static void pc_gx_commit_pending_and_flush(void) {
     if (!g_gx.in_begin) return;
@@ -143,7 +257,7 @@ static void pc_gx_commit_pending_and_flush(void) {
         g_gx.vertex_pending = 0;
     }
     g_gx.in_begin = 0;
-    if (g_gx.current_vertex_idx > 0)
+    if (g_gx.current_vertex_idx > g_gx.pending_verts)
         pc_gx_flush_vertices();
 }
 
@@ -159,7 +273,6 @@ void pc_gx_flush_if_begin_complete(void) {
 }
 
 int pc_emu64_frame_cmds = 0;
-int pc_emu64_frame_crashes = 0;
 int pc_emu64_frame_noop_cmds = 0;
 int pc_emu64_frame_tri_cmds = 0;
 int pc_emu64_frame_vtx_cmds = 0;
@@ -251,6 +364,7 @@ void pc_gx_init(void) {
 
     pc_gx_tev_init();
     pc_gx_texture_init();
+    pc_gx_texture_bind_cache_invalidate();
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
@@ -261,8 +375,9 @@ void pc_gx_init(void) {
 }
 
 void pc_gx_begin_frame(void) {
+    /* Profiler frame opens in graph_main so game_main is captured */
+    Uint64 prof_start = pc_profiler_begin_timer();
     pc_emu64_frame_cmds = 0;
-    pc_emu64_frame_crashes = 0;
     pc_emu64_frame_noop_cmds = 0;
     pc_emu64_frame_tri_cmds = 0;
     pc_emu64_frame_vtx_cmds = 0;
@@ -271,17 +386,22 @@ void pc_gx_begin_frame(void) {
     pc_emu64_frame_cull_rejected = 0;
     pc_gx_draw_call_count = 0;
     g_pc_widescreen_stretch = 0;
+    pc_gx_draw_pending();
     /* glClear respects write masks — must enable all before clearing */
     glDepthMask(GL_TRUE);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    /* Masks were changed behind the dirty system; reapply at first flush */
+    DIRTY(PC_GX_DIRTY_DEPTH | PC_GX_DIRTY_COLOR_MASK);
 #ifdef PC_ENHANCEMENTS
     pc_gx_update_aspect();
     glDisable(GL_SCISSOR_TEST);
     glViewport(0, 0, g_pc_window_w, g_pc_window_h);
+    pc_gx_viewport_state_invalidate();
 #endif
     glClearDepth(g_gx.clear_depth);
     glClearColor(g_gx.clear_color[0], g_gx.clear_color[1], g_gx.clear_color[2], g_gx.clear_color[3]);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    pc_profiler_add_time(PC_PROF_TIMER_GX_BEGIN, prof_start);
 }
 
 void pc_gx_restore_after_nes(void) {
@@ -292,6 +412,8 @@ void pc_gx_restore_after_nes(void) {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_gx.ebo);
     g_gx.dirty = PC_GX_DIRTY_ALL;
     g_gx.current_shader = 0; /* Force shader rebind on next draw */
+    pc_gx_texture_bind_cache_invalidate();
+    pc_gx_viewport_state_invalidate();
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glEnable(GL_BLEND);
@@ -315,10 +437,13 @@ void GXBegin(u32 primitive, u32 vtxfmt, u16 nverts) {
     /* Auto-flush previous batch if GXEnd was omitted (normal on real HW) */
     pc_gx_commit_pending_and_flush();
 
+    if (g_gx.pending_verts > 0 && g_gx.pending_verts + (int)nverts > PC_GX_MAX_VERTS)
+        pc_gx_draw_pending();
+
     g_gx.current_primitive = primitive;
     g_gx.current_vtxfmt = vtxfmt;
     g_gx.expected_vertex_count = nverts;
-    g_gx.current_vertex_idx = 0;
+    g_gx.current_vertex_idx = g_gx.pending_verts;
     g_gx.in_begin = 1;
     g_gx.vertex_pending = 0;
     memset(&g_gx.current_vertex, 0, sizeof(PCGXVertex));
@@ -450,139 +575,203 @@ void GXTexCoord1x16(u16 index) {
 void GXTexCoord1x8(u8 index) { GXTexCoord1x16(index); }
 
 /* --- Uniform Location Cache --- */
-static void pc_gx_cache_uniform_locations(GLuint shader) {
+void pc_gx_cache_uniform_locations(GLuint shader, PCGXUloc* u) {
     char name[48];
     int i;
-    #define UL(n) glGetUniformLocation(shader, n)
+    #define UL(n) pc_gx_get_uniform_location_profiled(shader, n)
 
-    g_gx.uloc.projection = UL("u_projection");
-    g_gx.uloc.modelview  = UL("u_modelview");
-    g_gx.uloc.normal_mtx = UL("u_normal_mtx");
+    u->projection = UL("u_projection");
+    u->modelview  = UL("u_modelview");
+    u->normal_mtx = UL("u_normal_mtx");
 
-    g_gx.uloc.tev_prev = UL("u_tev_prev");
-    g_gx.uloc.tev_reg0 = UL("u_tev_reg0");
-    g_gx.uloc.tev_reg1 = UL("u_tev_reg1");
-    g_gx.uloc.tev_reg2 = UL("u_tev_reg2");
+    u->tev_prev = UL("u_tev_prev");
+    u->tev_reg0 = UL("u_tev_reg0");
+    u->tev_reg1 = UL("u_tev_reg1");
+    u->tev_reg2 = UL("u_tev_reg2");
 
-    g_gx.uloc.num_tev_stages = UL("u_num_tev_stages");
+    u->num_tev_stages = UL("u_num_tev_stages");
     for (i = 0; i < PC_GX_MAX_TEV_STAGES; i++) {
         snprintf(name, sizeof(name), "u_tev_color_in[%d]", i);
-        g_gx.uloc.tev_color_in[i] = UL(name);
+        u->tev_color_in[i] = UL(name);
         snprintf(name, sizeof(name), "u_tev_alpha_in[%d]", i);
-        g_gx.uloc.tev_alpha_in[i] = UL(name);
+        u->tev_alpha_in[i] = UL(name);
         snprintf(name, sizeof(name), "u_tev_color_op[%d]", i);
-        g_gx.uloc.tev_color_op[i] = UL(name);
+        u->tev_color_op[i] = UL(name);
         snprintf(name, sizeof(name), "u_tev_alpha_op[%d]", i);
-        g_gx.uloc.tev_alpha_op[i] = UL(name);
+        u->tev_alpha_op[i] = UL(name);
         snprintf(name, sizeof(name), "u_tev_tc_src[%d]", i);
-        g_gx.uloc.tev_tc_src[i] = UL(name);
+        u->tev_tc_src[i] = UL(name);
         snprintf(name, sizeof(name), "u_tev_ind_cfg[%d]", i);
-        g_gx.uloc.tev_ind_cfg[i] = UL(name);
+        u->tev_ind_cfg[i] = UL(name);
         snprintf(name, sizeof(name), "u_tev_ind_wrap[%d]", i);
-        g_gx.uloc.tev_ind_wrap[i] = UL(name);
+        u->tev_ind_wrap[i] = UL(name);
     }
 
-    g_gx.uloc.kcolor   = UL("u_kcolor");
-    g_gx.uloc.tev_ksel = UL("u_tev_ksel");
+    u->kcolor   = UL("u_kcolor");
+    u->tev_ksel = UL("u_tev_ksel");
 
-    g_gx.uloc.alpha_comp0 = UL("u_alpha_comp0");
-    g_gx.uloc.alpha_ref0  = UL("u_alpha_ref0");
-    g_gx.uloc.alpha_op    = UL("u_alpha_op");
-    g_gx.uloc.alpha_comp1 = UL("u_alpha_comp1");
-    g_gx.uloc.alpha_ref1  = UL("u_alpha_ref1");
+    u->alpha_ctrl = UL("u_alpha_ctrl");
+    u->alpha_refs = UL("u_alpha_refs");
 
-    g_gx.uloc.lighting_enabled = UL("u_lighting_enabled");
-    g_gx.uloc.mat_color  = UL("u_mat_color");
-    g_gx.uloc.amb_color  = UL("u_amb_color");
-    g_gx.uloc.chan_mat_src = UL("u_chan_mat_src");
-    g_gx.uloc.chan_amb_src = UL("u_chan_amb_src");
-    g_gx.uloc.num_chans  = UL("u_num_chans");
-    g_gx.uloc.alpha_lighting_enabled = UL("u_alpha_lighting_enabled");
-    g_gx.uloc.alpha_mat_src = UL("u_alpha_mat_src");
+    u->lighting_enabled = UL("u_lighting_cfg0");
+    u->mat_color  = UL("u_chan_color[0]");
+    u->amb_color  = -1;
+    u->chan_mat_src = -1;
+    u->chan_amb_src = -1;
+    u->num_chans  = -1;
+    u->alpha_lighting_enabled = UL("u_lighting_cfg1");
+    u->alpha_mat_src = -1;
 
-    g_gx.uloc.light_mask = UL("u_light_mask");
+    u->light_mask = -1;
     for (i = 0; i < 8; i++) {
         snprintf(name, sizeof(name), "u_light_pos[%d]", i);
-        g_gx.uloc.light_pos[i] = UL(name);
+        u->light_pos[i] = UL(name);
         snprintf(name, sizeof(name), "u_light_color[%d]", i);
-        g_gx.uloc.light_color[i] = UL(name);
+        u->light_color[i] = UL(name);
     }
 
-    g_gx.uloc.texmtx_enable[0] = UL("u_texmtx_enable");
-    g_gx.uloc.texmtx_row0[0]  = UL("u_texmtx_row0");
-    g_gx.uloc.texmtx_row1[0]  = UL("u_texmtx_row1");
-    g_gx.uloc.texgen_src[0]   = UL("u_texgen_src0");
-    g_gx.uloc.texmtx_enable[1] = UL("u_texmtx1_enable");
-    g_gx.uloc.texmtx_row0[1]  = UL("u_texmtx1_row0");
-    g_gx.uloc.texmtx_row1[1]  = UL("u_texmtx1_row1");
-    g_gx.uloc.texgen_src[1]   = UL("u_texgen_src1");
+    u->texmtx_enable[0] = UL("u_texmtx_enable[0]");
+    u->texmtx_row0[0]  = UL("u_texmtx_row0[0]");
+    u->texmtx_row1[0]  = UL("u_texmtx_row1[0]");
+    u->texgen_src[0]   = UL("u_texgen_src[0]");
+    u->texmtx_enable[1] = -1;
+    u->texmtx_row0[1]  = -1;
+    u->texmtx_row1[1]  = -1;
+    u->texgen_src[1]   = -1;
 
-    g_gx.uloc.use_texture0 = UL("u_use_texture0");
-    g_gx.uloc.use_texture1 = UL("u_use_texture1");
-    g_gx.uloc.use_texture2 = UL("u_use_texture2");
-    g_gx.uloc.texture0 = UL("u_texture0");
-    g_gx.uloc.texture1 = UL("u_texture1");
-    g_gx.uloc.texture2 = UL("u_texture2");
+    u->use_texture0 = UL("u_use_texture[0]");
+    u->use_texture1 = -1;
+    u->use_texture2 = -1;
+    u->texture0 = UL("u_texture0");
+    u->texture1 = UL("u_texture1");
+    u->texture2 = UL("u_texture2");
 
-    g_gx.uloc.num_ind_stages = UL("u_num_ind_stages");
+    u->num_ind_stages = UL("u_num_ind_stages");
     for (i = 0; i < 4; i++) {
         snprintf(name, sizeof(name), "u_ind_tex%d", i);
-        g_gx.uloc.ind_tex[i] = UL(name);
+        u->ind_tex[i] = UL(name);
         snprintf(name, sizeof(name), "u_ind_scale[%d]", i);
-        g_gx.uloc.ind_scale[i] = UL(name);
+        u->ind_scale[i] = UL(name);
     }
     for (i = 0; i < PC_GX_MAX_TEV_STAGES; i++) {
         snprintf(name, sizeof(name), "u_ind_mtx_r0[%d]", i);
-        g_gx.uloc.ind_mtx_r0[i] = UL(name);
+        u->ind_mtx_r0[i] = UL(name);
         snprintf(name, sizeof(name), "u_ind_mtx_r1[%d]", i);
-        g_gx.uloc.ind_mtx_r1[i] = UL(name);
+        u->ind_mtx_r1[i] = UL(name);
     }
 
-    g_gx.uloc.fog_type  = UL("u_fog_type");
-    g_gx.uloc.fog_start = UL("u_fog_start");
-    g_gx.uloc.fog_end   = UL("u_fog_end");
-    g_gx.uloc.fog_color = UL("u_fog_color");
+    u->fog_type   = UL("u_fog_params");
+    u->fog_enable = UL("u_fog_enable");
+    u->fog_start  = -1;
+    u->fog_end    = -1;
+    u->fog_color  = UL("u_fog_color");
 
     /* Per-stage bias/scale/clamp/output */
     for (i = 0; i < PC_GX_MAX_TEV_STAGES; i++) {
         snprintf(name, sizeof(name), "u_tev_bsc[%d]", i);
-        g_gx.uloc.tev_bsc[i] = UL(name);
+        u->tev_bsc[i] = UL(name);
         snprintf(name, sizeof(name), "u_tev_out[%d]", i);
-        g_gx.uloc.tev_out[i] = UL(name);
+        u->tev_out[i] = UL(name);
         snprintf(name, sizeof(name), "u_tev_swap[%d]", i);
-        g_gx.uloc.tev_swap[i] = UL(name);
+        u->tev_swap[i] = UL(name);
     }
-    g_gx.uloc.swap_table = UL("u_swap_table");
+    u->swap_table = UL("u_swap_table");
 
     #undef UL
+}
+
+/* Uniform groups this program hasn't seen the latest values of */
+static unsigned int pc_gx_variant_stale_groups(const PCGXShaderVariant* v) {
+    unsigned int stale = 0;
+    for (int b = 0; (1u << b) <= PC_GX_DIRTY_UNIFORM_GROUPS; b++) {
+        if (v->uploaded_seq[b] != g_gx.group_seq[b]) stale |= (1u << b);
+    }
+    return stale;
 }
 
 /* --- Vertex Flush --- */
 int pc_gx_draw_call_count = 0;
 
-void pc_gx_flush_vertices(void) {
-    int count = g_gx.current_vertex_idx;
+/* Draws the deferred run. Must run before any GL call that bypasses the
+ * dirty system (viewport, scissor, readpixels, raw texture binds, swap)
+ * so the run renders with the state it was built under. */
+void pc_gx_draw_pending(void) {
+    int count = g_gx.pending_verts;
     if (count == 0) return;
 
-    pc_gx_draw_call_count++;
+    glBindVertexArray(g_gx.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, g_gx.vbo);
+    pc_gx_buffer_data_profiled(GL_ARRAY_BUFFER, count * sizeof(PCGXVertex), g_gx.vertex_buffer, GL_STREAM_DRAW);
 
-    GLuint shader = pc_gx_tev_get_shader(&g_gx);
+    Uint64 draw_start = pc_profiler_begin_timer();
+    if (g_gx.pending_prim == GX_QUADS) {
+        int num_indices = (count / 4) * 6;
+        glDrawElements(GL_TRIANGLES, num_indices, GL_UNSIGNED_SHORT, 0);
+        pc_profiler_add_count_draw(count, num_indices);
+        PC_GL_CHECK("glDrawElements");
+    } else {
+        glDrawArrays(GL_TRIANGLES, 0, count);
+        pc_profiler_add_count_draw(count, 0);
+        PC_GL_CHECK("glDrawArrays");
+    }
+    pc_gx_draw_call_count++;
+    pc_profiler_add_time(PC_PROF_TIMER_DRAW_SUBMIT, draw_start);
+
+    /* Shift verts committed after the run down to the buffer start */
+    int extra = g_gx.current_vertex_idx - count;
+    if (extra > 0) {
+        memmove(g_gx.vertex_buffer, g_gx.vertex_buffer + count,
+                (size_t)extra * sizeof(PCGXVertex));
+        g_gx.current_vertex_idx = extra;
+    } else {
+        g_gx.current_vertex_idx = 0;
+    }
+    g_gx.pending_verts = 0;
+}
+
+void pc_gx_flush_vertices(void) {
+    int count = g_gx.current_vertex_idx - g_gx.pending_verts;
+    if (count <= 0) return;
+
+    Uint64 flush_start = pc_profiler_begin_timer();
+    pc_profiler_add_count_flush();
+
+    PCGXShaderVariant* var = pc_gx_tev_get_variant();
+    GLuint shader = var->prog;
+    int prim = g_gx.current_primitive;
+    /* Strips/fans would join across batches */
+    int deferrable = (prim == GX_TRIANGLES || prim == GX_QUADS);
+
+    /* Same GL state as the deferred run: absorb the verts, no GL work */
+    if (g_gx.pending_verts > 0 && g_gx.dirty == 0 && deferrable &&
+        prim == g_gx.pending_prim && shader == g_gx.current_shader) {
+        g_gx.pending_verts = g_gx.current_vertex_idx;
+        pc_profiler_add_time(PC_PROF_TIMER_GX_FLUSH, flush_start);
+        return;
+    }
+
+    /* State is changing: draw the deferred run while GL state still matches it */
+    pc_gx_draw_pending();
+
     if (shader && shader != g_gx.current_shader) {
-        glUseProgram(shader);
+        pc_gx_use_program_profiled(shader);
         PC_GL_CHECK("glUseProgram");
         g_gx.current_shader = shader;
-        pc_gx_cache_uniform_locations(shader);
-        g_gx.dirty = PC_GX_DIRTY_ALL;
+        g_gx.uloc = var->uloc;
+        /* Uniform values persist per program: re-upload only groups that
+         * changed while another program was bound */
+        g_gx.dirty |= pc_gx_variant_stale_groups(var);
     }
 
     glBindVertexArray(g_gx.vao);
     glBindBuffer(GL_ARRAY_BUFFER, g_gx.vbo);
-    glBufferData(GL_ARRAY_BUFFER, count * sizeof(PCGXVertex), g_gx.vertex_buffer, GL_STREAM_DRAW);
 
     /* Upload only dirty state groups */
     if (shader) {
+        Uint64 uniform_start = pc_profiler_begin_timer();
         GLint loc;
         unsigned int dirty = g_gx.dirty;
+        pc_profiler_add_dirty_mask(dirty);
         #define UL(field) g_gx.uloc.field
 
         if (dirty & PC_GX_DIRTY_PROJECTION) {
@@ -614,34 +803,58 @@ void pc_gx_flush_vertices(void) {
 
         if (dirty & PC_GX_DIRTY_TEV_STAGES) {
             loc = UL(num_tev_stages); if (loc >= 0) glUniform1i(loc, g_gx.num_tev_stages);
-            for (int s = 0; s < PC_GX_MAX_TEV_STAGES && s < g_gx.num_tev_stages; s++) {
-                PCGXTevStage* ts = &g_gx.tev_stages[s];
-                loc = UL(tev_color_in[s]); if (loc >= 0) glUniform4i(loc, ts->color_a, ts->color_b, ts->color_c, ts->color_d);
-                loc = UL(tev_alpha_in[s]); if (loc >= 0) glUniform4i(loc, ts->alpha_a, ts->alpha_b, ts->alpha_c, ts->alpha_d);
-                loc = UL(tev_color_op[s]); if (loc >= 0) glUniform1i(loc, ts->color_op);
-                loc = UL(tev_alpha_op[s]); if (loc >= 0) glUniform1i(loc, ts->alpha_op);
-                loc = UL(tev_bsc[s]);  if (loc >= 0) glUniform4i(loc, ts->color_bias, ts->color_scale, ts->alpha_bias, ts->alpha_scale);
-                loc = UL(tev_out[s]);  if (loc >= 0) glUniform4i(loc, ts->color_clamp, ts->alpha_clamp, ts->color_out, ts->alpha_out);
-                loc = UL(tev_swap[s]); if (loc >= 0) glUniform2i(loc, ts->ras_swap, ts->tex_swap);
-            }
-            loc = UL(tev_ksel);
-            if (loc >= 0) {
-                int ksel[PC_GX_MAX_TEV_STAGES * 3];
+            {
+                GLint color_in[PC_GX_MAX_TEV_STAGES][4];
+                GLint alpha_in[PC_GX_MAX_TEV_STAGES][4];
+                GLint color_op[PC_GX_MAX_TEV_STAGES];
+                GLint alpha_op[PC_GX_MAX_TEV_STAGES];
+                GLint bsc[PC_GX_MAX_TEV_STAGES][4];
+                GLint out_cfg[PC_GX_MAX_TEV_STAGES][4];
+                GLint swap[PC_GX_MAX_TEV_STAGES][2];
+                GLint ksel[PC_GX_MAX_TEV_STAGES][3];
+                GLint tc_src[PC_GX_MAX_TEV_STAGES];
+
                 for (int s = 0; s < PC_GX_MAX_TEV_STAGES; s++) {
-                    ksel[s * 3 + 0] = g_gx.tev_stages[s].k_color_sel;
-                    ksel[s * 3 + 1] = g_gx.tev_stages[s].k_alpha_sel;
-                    ksel[s * 3 + 2] = s;
+                    PCGXTevStage* ts = &g_gx.tev_stages[s];
+                    color_in[s][0] = ts->color_a;
+                    color_in[s][1] = ts->color_b;
+                    color_in[s][2] = ts->color_c;
+                    color_in[s][3] = ts->color_d;
+                    alpha_in[s][0] = ts->alpha_a;
+                    alpha_in[s][1] = ts->alpha_b;
+                    alpha_in[s][2] = ts->alpha_c;
+                    alpha_in[s][3] = ts->alpha_d;
+                    color_op[s] = ts->color_op;
+                    alpha_op[s] = ts->alpha_op;
+                    bsc[s][0] = ts->color_bias;
+                    bsc[s][1] = ts->color_scale;
+                    bsc[s][2] = ts->alpha_bias;
+                    bsc[s][3] = ts->alpha_scale;
+                    out_cfg[s][0] = ts->color_clamp;
+                    out_cfg[s][1] = ts->alpha_clamp;
+                    out_cfg[s][2] = ts->color_out;
+                    out_cfg[s][3] = ts->alpha_out;
+                    swap[s][0] = ts->ras_swap;
+                    swap[s][1] = ts->tex_swap;
+                    ksel[s][0] = ts->k_color_sel;
+                    ksel[s][1] = ts->k_alpha_sel;
+                    ksel[s][2] = s;
+                    if (s < g_gx.num_tev_stages) {
+                        tc_src[s] = pc_gx_tc_src_normalize(ts->tex_coord, s);
+                    } else {
+                        tc_src[s] = 0;
+                    }
                 }
-                glUniform3iv(loc, PC_GX_MAX_TEV_STAGES, ksel);
-            }
-            for (int s = 0; s < PC_GX_MAX_TEV_STAGES; s++) {
-                int tc_src = 0;
-                if (s < g_gx.num_tev_stages) {
-                    int tc = g_gx.tev_stages[s].tex_coord;
-                    if (tc >= 0 && tc < 8) tc_src = tc;
-                    else tc_src = s;
-                }
-                loc = UL(tev_tc_src[s]); if (loc >= 0) glUniform1i(loc, tc_src);
+
+                loc = UL(tev_color_in[0]); if (loc >= 0) glUniform4iv(loc, PC_GX_MAX_TEV_STAGES, &color_in[0][0]);
+                loc = UL(tev_alpha_in[0]); if (loc >= 0) glUniform4iv(loc, PC_GX_MAX_TEV_STAGES, &alpha_in[0][0]);
+                loc = UL(tev_color_op[0]); if (loc >= 0) glUniform1iv(loc, PC_GX_MAX_TEV_STAGES, color_op);
+                loc = UL(tev_alpha_op[0]); if (loc >= 0) glUniform1iv(loc, PC_GX_MAX_TEV_STAGES, alpha_op);
+                loc = UL(tev_bsc[0]);      if (loc >= 0) glUniform4iv(loc, PC_GX_MAX_TEV_STAGES, &bsc[0][0]);
+                loc = UL(tev_out[0]);      if (loc >= 0) glUniform4iv(loc, PC_GX_MAX_TEV_STAGES, &out_cfg[0][0]);
+                loc = UL(tev_swap[0]);     if (loc >= 0) glUniform2iv(loc, PC_GX_MAX_TEV_STAGES, &swap[0][0]);
+                loc = UL(tev_ksel);        if (loc >= 0) glUniform3iv(loc, PC_GX_MAX_TEV_STAGES, &ksel[0][0]);
+                loc = UL(tev_tc_src[0]);   if (loc >= 0) glUniform1iv(loc, PC_GX_MAX_TEV_STAGES, tc_src);
             }
         }
 
@@ -664,25 +877,34 @@ void pc_gx_flush_vertices(void) {
         }
 
         if (dirty & PC_GX_DIRTY_ALPHA_CMP) {
-            loc = UL(alpha_comp0); if (loc >= 0) glUniform1i(loc, g_gx.alpha_comp0);
-            loc = UL(alpha_ref0);  if (loc >= 0) glUniform1i(loc, g_gx.alpha_ref0);
-            loc = UL(alpha_op);    if (loc >= 0) glUniform1i(loc, g_gx.alpha_op);
-            loc = UL(alpha_comp1); if (loc >= 0) glUniform1i(loc, g_gx.alpha_comp1);
-            loc = UL(alpha_ref1);  if (loc >= 0) glUniform1i(loc, g_gx.alpha_ref1);
+            GLint ctrl[3] = { g_gx.alpha_comp0, g_gx.alpha_op, g_gx.alpha_comp1 };
+            GLint refs[2] = { g_gx.alpha_ref0, g_gx.alpha_ref1 };
+            loc = UL(alpha_ctrl); if (loc >= 0) glUniform3iv(loc, 1, ctrl);
+            loc = UL(alpha_refs); if (loc >= 0) glUniform2iv(loc, 1, refs);
         }
 
         if (dirty & PC_GX_DIRTY_LIGHTING) {
-            loc = UL(lighting_enabled); if (loc >= 0) glUniform1i(loc, g_gx.chan_ctrl_enable[0]);
-            loc = UL(mat_color);  if (loc >= 0) glUniform4fv(loc, 1, g_gx.chan_mat_color[0]);
-            loc = UL(amb_color);  if (loc >= 0) glUniform4fv(loc, 1, g_gx.chan_amb_color[0]);
-            loc = UL(chan_mat_src); if (loc >= 0) glUniform1i(loc, g_gx.chan_ctrl_mat_src[0]);
-            loc = UL(chan_amb_src); if (loc >= 0) glUniform1i(loc, g_gx.chan_ctrl_amb_src[0]);
-            loc = UL(num_chans);  if (loc >= 0) glUniform1i(loc, g_gx.num_chans);
-            loc = UL(alpha_lighting_enabled); if (loc >= 0) glUniform1i(loc, g_gx.chan_ctrl_enable[1]);
-            loc = UL(alpha_mat_src); if (loc >= 0) glUniform1i(loc, g_gx.chan_ctrl_mat_src[1]);
+            GLint lighting_cfg0[4] = {
+                g_gx.chan_ctrl_enable[0],
+                g_gx.chan_ctrl_mat_src[0],
+                g_gx.chan_ctrl_amb_src[0],
+                g_gx.num_chans
+            };
+            GLint lighting_cfg1[4] = {
+                g_gx.chan_ctrl_enable[1],
+                g_gx.chan_ctrl_mat_src[1],
+                g_gx.chan_ctrl_light_mask[0],
+                0
+            };
+            GLfloat chan_color[2][4];
+
+            memcpy(chan_color[0], g_gx.chan_mat_color[0], sizeof(chan_color[0]));
+            memcpy(chan_color[1], g_gx.chan_amb_color[0], sizeof(chan_color[1]));
+
+            loc = UL(lighting_enabled); if (loc >= 0) glUniform4iv(loc, 1, lighting_cfg0);
+            loc = UL(alpha_lighting_enabled); if (loc >= 0) glUniform4iv(loc, 1, lighting_cfg1);
+            loc = UL(mat_color); if (loc >= 0) glUniform4fv(loc, 2, &chan_color[0][0]);
             {
-                int color_light_mask = g_gx.chan_ctrl_light_mask[0];
-                loc = UL(light_mask); if (loc >= 0) glUniform1i(loc, color_light_mask);
                 float lpos[8][3], lcol[8][4];
                 for (int i = 0; i < 8; i++) {
                     memcpy(lpos[i], g_gx.lights[i].pos, sizeof(lpos[i]));
@@ -694,18 +916,30 @@ void pc_gx_flush_vertices(void) {
         }
 
         if (dirty & PC_GX_DIRTY_TEXGEN) {
+            GLint texmtx_enable[2];
+            GLint texgen_src[2];
+            GLfloat texmtx_row0[2][4];
+            GLfloat texmtx_row1[2][4];
+
             for (int tg = 0; tg < 2; tg++) {
-                int mtx_id = g_gx.tex_gen_mtx[tg];
-                int slot = pc_tex_mtx_id_to_slot(mtx_id);
-                int has_mtx = (slot >= 0 && slot < 10);
-                loc = g_gx.uloc.texmtx_enable[tg]; if (loc >= 0) glUniform1i(loc, has_mtx);
-                if (has_mtx) {
-                    const float* tm = (const float*)g_gx.tex_mtx[slot];
-                    loc = g_gx.uloc.texmtx_row0[tg]; if (loc >= 0) glUniform4f(loc, tm[0], tm[1], tm[2], tm[3]);
-                    loc = g_gx.uloc.texmtx_row1[tg]; if (loc >= 0) glUniform4f(loc, tm[4], tm[5], tm[6], tm[7]);
+                int slot = pc_tex_mtx_id_to_slot(g_gx.tex_gen_mtx[tg]);
+                texmtx_enable[tg] = (slot >= 0 && slot < 10);
+                texgen_src[tg] = g_gx.tex_gen_src[tg];
+                memset(texmtx_row0[tg], 0, sizeof(texmtx_row0[tg]));
+                memset(texmtx_row1[tg], 0, sizeof(texmtx_row1[tg]));
+                texmtx_row0[tg][0] = 1.0f;
+                texmtx_row1[tg][1] = 1.0f;
+                if (texmtx_enable[tg]) {
+                    const GLfloat* tm = (const GLfloat*)g_gx.tex_mtx[slot];
+                    memcpy(texmtx_row0[tg], &tm[0], sizeof(texmtx_row0[tg]));
+                    memcpy(texmtx_row1[tg], &tm[4], sizeof(texmtx_row1[tg]));
                 }
-                loc = g_gx.uloc.texgen_src[tg]; if (loc >= 0) glUniform1i(loc, g_gx.tex_gen_src[tg]);
             }
+
+            loc = g_gx.uloc.texmtx_enable[0]; if (loc >= 0) glUniform1iv(loc, 2, texmtx_enable);
+            loc = g_gx.uloc.texmtx_row0[0];   if (loc >= 0) glUniform4fv(loc, 2, &texmtx_row0[0][0]);
+            loc = g_gx.uloc.texmtx_row1[0];   if (loc >= 0) glUniform4fv(loc, 2, &texmtx_row1[0][0]);
+            loc = g_gx.uloc.texgen_src[0];    if (loc >= 0) glUniform1iv(loc, 2, texgen_src);
         }
 
         if (dirty & (PC_GX_DIRTY_TEXTURES | PC_GX_DIRTY_TEV_STAGES)) {
@@ -719,31 +953,30 @@ void pc_gx_flush_vertices(void) {
                 }
                 if (tex_obj_stage[s] != 0) {
                     use_tex_stage[s] = 1;
-                    glActiveTexture(GL_TEXTURE0 + s);
-                    glBindTexture(GL_TEXTURE_2D, tex_obj_stage[s]);
+                    pc_gx_active_texture_cached(GL_TEXTURE0 + s);
+                    pc_gx_bind_texture_profiled(GL_TEXTURE_2D, tex_obj_stage[s]);
                 }
             }
-            loc = UL(use_texture0); if (loc >= 0) glUniform1i(loc, use_tex_stage[0]);
-            loc = UL(use_texture1); if (loc >= 0) glUniform1i(loc, use_tex_stage[1]);
-            loc = UL(use_texture2); if (loc >= 0) glUniform1i(loc, use_tex_stage[2]);
-            loc = UL(texture0); if (loc >= 0) glUniform1i(loc, 0);
-            loc = UL(texture1); if (loc >= 0) glUniform1i(loc, 1);
-            loc = UL(texture2); if (loc >= 0) glUniform1i(loc, 2);
+            loc = UL(use_texture0); if (loc >= 0) glUniform1iv(loc, PC_GX_MAX_TEV_STAGES, use_tex_stage);
         }
 
         /* Indirect textures on units 3-6 */
         if (dirty & (PC_GX_DIRTY_INDIRECT | PC_GX_DIRTY_TEXTURES)) {
-            loc = UL(num_ind_stages); if (loc >= 0) glUniform1i(loc, g_gx.num_ind_stages);
             for (int i = 0; i < g_gx.num_ind_stages && i < 4; i++) {
                 int ind_tex_map = g_gx.ind_order[i].tex_map;
                 if (ind_tex_map >= 0 && ind_tex_map < 8) {
                     GLuint ind_tex = g_gx.gl_textures[ind_tex_map];
                     if (ind_tex) {
-                        glActiveTexture(GL_TEXTURE3 + i);
-                        glBindTexture(GL_TEXTURE_2D, ind_tex);
+                        pc_gx_active_texture_cached(GL_TEXTURE3 + i);
+                        pc_gx_bind_texture_profiled(GL_TEXTURE_2D, ind_tex);
                     }
                 }
-                loc = UL(ind_tex[i]); if (loc >= 0) glUniform1i(loc, 3 + i);
+            }
+        }
+
+        if (dirty & PC_GX_DIRTY_INDIRECT) {
+            loc = UL(num_ind_stages); if (loc >= 0) glUniform1i(loc, g_gx.num_ind_stages);
+            for (int i = 0; i < g_gx.num_ind_stages && i < 4; i++) {
                 loc = UL(ind_scale[i]);
                 if (loc >= 0) {
                     float s_scale = 1.0f / (float)(1 << g_gx.ind_order[i].scale_s);
@@ -767,16 +1000,27 @@ void pc_gx_flush_vertices(void) {
                 if (loc >= 0) glUniform3i(loc, ts->ind_wrap_s, ts->ind_wrap_t, ts->ind_add_prev);
             }
         }
-        glActiveTexture(GL_TEXTURE0);
+        pc_gx_active_texture_cached(GL_TEXTURE0);
 
         if (dirty & PC_GX_DIRTY_FOG) {
-            loc = UL(fog_type);  if (loc >= 0) glUniform1i(loc, g_gx.fog_type);
-            loc = UL(fog_start); if (loc >= 0) glUniform1f(loc, g_gx.fog_start);
-            loc = UL(fog_end);   if (loc >= 0) glUniform1f(loc, g_gx.fog_end);
+            GLfloat fog_params[4] = {
+                (GLfloat)g_gx.fog_type, g_gx.fog_start, g_gx.fog_end, 0.0f
+            };
+            loc = UL(fog_type);   if (loc >= 0) glUniform4fv(loc, 1, fog_params);
+            loc = UL(fog_enable); if (loc >= 0) glUniform1i(loc, g_gx.fog_type != 0);
             loc = UL(fog_color);  if (loc >= 0) glUniform4fv(loc, 1, g_gx.fog_color);
         }
 
         #undef UL
+        pc_profiler_add_time(PC_PROF_TIMER_UNIFORM_UPLOAD, uniform_start);
+
+        /* Record what this program has now seen for stale tracking */
+        {
+            unsigned int groups = dirty & PC_GX_DIRTY_UNIFORM_GROUPS;
+            for (int b = 0; groups; b++, groups >>= 1) {
+                if (groups & 1) var->uploaded_seq[b] = g_gx.group_seq[b];
+            }
+        }
     }
 
     GLenum gl_prim;
@@ -791,7 +1035,10 @@ void pc_gx_flush_vertices(void) {
         default:               gl_prim = GL_TRIANGLES; break;
     }
 
+    Uint64 state_start = pc_profiler_begin_timer();
+
     if (g_gx.dirty & PC_GX_DIRTY_DEPTH) {
+        pc_profiler_add_count_state_change();
         if (g_gx.z_compare_enable) {
             glEnable(GL_DEPTH_TEST);
             GLenum zfunc;
@@ -814,6 +1061,7 @@ void pc_gx_flush_vertices(void) {
     }
 
     if (g_gx.dirty & PC_GX_DIRTY_COLOR_MASK) {
+        pc_profiler_add_count_state_change();
         glColorMask(
             g_gx.color_update_enable ? GL_TRUE : GL_FALSE,
             g_gx.color_update_enable ? GL_TRUE : GL_FALSE,
@@ -823,6 +1071,7 @@ void pc_gx_flush_vertices(void) {
     }
 
     if (g_gx.dirty & PC_GX_DIRTY_CULL) {
+        pc_profiler_add_count_state_change();
         switch (g_gx.cull_mode) {
             case GX_CULL_NONE:  glDisable(GL_CULL_FACE); break;
             case GX_CULL_FRONT: glEnable(GL_CULL_FACE); glCullFace(GL_FRONT); break;
@@ -832,6 +1081,11 @@ void pc_gx_flush_vertices(void) {
     }
 
     if (g_gx.dirty & PC_GX_DIRTY_BLEND) {
+        pc_profiler_add_count_state_change();
+        /* Equation is state-driven: no hidden post-draw reset, so an
+         * early-out on unchanged blend state stays correct */
+        glBlendEquation(g_gx.blend_mode == GX_BM_SUBTRACT ? GL_FUNC_REVERSE_SUBTRACT
+                                                          : GL_FUNC_ADD);
         switch (g_gx.blend_mode) {
             case GX_BM_NONE:
                 glDisable(GL_BLEND);
@@ -875,26 +1129,41 @@ void pc_gx_flush_vertices(void) {
                 break;
             case GX_BM_SUBTRACT:
                 glEnable(GL_BLEND);
-                glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
                 glBlendFunc(GL_ONE, GL_ONE);
                 break;
         }
     }
+    pc_profiler_add_time(PC_PROF_TIMER_GL_STATE, state_start);
 
-    if (g_gx.current_primitive == GX_QUADS) {
+    g_gx.dirty = 0;
+
+    if (deferrable) {
+        /* Defer the draw: the next batch may merge into it */
+        g_gx.pending_prim = prim;
+        g_gx.pending_verts = count;
+        pc_profiler_add_time(PC_PROF_TIMER_GX_FLUSH, flush_start);
+        return;
+    }
+
+    pc_gx_buffer_data_profiled(GL_ARRAY_BUFFER, count * sizeof(PCGXVertex), g_gx.vertex_buffer, GL_STREAM_DRAW);
+
+    Uint64 draw_start = pc_profiler_begin_timer();
+    if (prim == GX_QUADS) {
         int num_quads = count / 4;
         int num_indices = num_quads * 6;
         glDrawElements(GL_TRIANGLES, num_indices, GL_UNSIGNED_SHORT, 0);
+        pc_profiler_add_count_draw(count, num_indices);
         PC_GL_CHECK("glDrawElements");
     } else {
         glDrawArrays(gl_prim, 0, count);
+        pc_profiler_add_count_draw(count, 0);
         PC_GL_CHECK("glDrawArrays");
     }
+    pc_gx_draw_call_count++;
+    pc_profiler_add_time(PC_PROF_TIMER_DRAW_SUBMIT, draw_start);
 
-    if (g_gx.blend_mode == GX_BM_SUBTRACT)
-        glBlendEquation(GL_FUNC_ADD);
-
-    g_gx.dirty = 0;
+    g_gx.current_vertex_idx = 0;
+    pc_profiler_add_time(PC_PROF_TIMER_GX_FLUSH, flush_start);
 }
 
 /* --- Vertex Descriptor / Format --- */
@@ -932,7 +1201,30 @@ void GXInvalidateVtxCache(void) { }
 
 /* --- Transforms --- */
 void GXSetProjection(const void* mtx, u32 type) {
+    /* Stored matrix gets aspect-scaled below, so filter on a shadow of the
+     * raw input plus everything that feeds the final matrix */
+    static float last_in[12];
+    static int last_type = -1;
+    int same = 0;
+#ifdef PC_ENHANCEMENTS
+    static int last_stretch = -1, last_aspect_active = -1;
+    static float last_aspect_factor;
+#endif
+
     pc_gx_flush_if_begin_complete();
+    same = (int)type == last_type && memcmp(last_in, mtx, sizeof(last_in)) == 0;
+#ifdef PC_ENHANCEMENTS
+    same = same && g_pc_widescreen_stretch == last_stretch &&
+           g_aspect_active == last_aspect_active &&
+           g_aspect_factor == last_aspect_factor;
+    last_stretch = g_pc_widescreen_stretch;
+    last_aspect_active = g_aspect_active;
+    last_aspect_factor = g_aspect_factor;
+#endif
+    if (same) return;
+    memcpy(last_in, mtx, sizeof(last_in));
+    last_type = (int)type;
+
     DIRTY(PC_GX_DIRTY_PROJECTION);
     g_gx.projection_type = type;
     memcpy(g_gx.projection_mtx, mtx, sizeof(float) * 12);
@@ -962,39 +1254,66 @@ void GXSetProjection(const void* mtx, u32 type) {
 
 void GXLoadPosMtxImm(const void* mtx, u32 id) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_MODELVIEW);
     int slot = id / 3;
-    if (slot < 10) memcpy(g_gx.pos_mtx[slot], mtx, sizeof(float) * 12);
+    if (slot >= 10) return;
+    if (memcmp(g_gx.pos_mtx[slot], mtx, sizeof(float) * 12) == 0) return;
+    DIRTY(PC_GX_DIRTY_MODELVIEW);
+    memcpy(g_gx.pos_mtx[slot], mtx, sizeof(float) * 12);
 }
 
 void GXLoadNrmMtxImm(const void* mtx, u32 id) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_MODELVIEW);
     int slot = id / 3;
-    if (slot < 10) {
-        /* Extract upper-left 3x3 from 3x4 row-major Mtx (stride 4, not contiguous) */
-        const float* src = (const float*)mtx;
-        g_gx.nrm_mtx[slot][0][0] = src[0]; g_gx.nrm_mtx[slot][0][1] = src[1]; g_gx.nrm_mtx[slot][0][2] = src[2];
-        g_gx.nrm_mtx[slot][1][0] = src[4]; g_gx.nrm_mtx[slot][1][1] = src[5]; g_gx.nrm_mtx[slot][1][2] = src[6];
-        g_gx.nrm_mtx[slot][2][0] = src[8]; g_gx.nrm_mtx[slot][2][1] = src[9]; g_gx.nrm_mtx[slot][2][2] = src[10];
+    if (slot >= 10) return;
+
+    /* Extract upper-left 3x3 from 3x4 row-major Mtx (stride 4, not contiguous) */
+    const float* src = (const float*)mtx;
+    if (g_gx.nrm_mtx[slot][0][0] == src[0] && g_gx.nrm_mtx[slot][0][1] == src[1] &&
+        g_gx.nrm_mtx[slot][0][2] == src[2] && g_gx.nrm_mtx[slot][1][0] == src[4] &&
+        g_gx.nrm_mtx[slot][1][1] == src[5] && g_gx.nrm_mtx[slot][1][2] == src[6] &&
+        g_gx.nrm_mtx[slot][2][0] == src[8] && g_gx.nrm_mtx[slot][2][1] == src[9] &&
+        g_gx.nrm_mtx[slot][2][2] == src[10]) {
+        return;
     }
+
+    DIRTY(PC_GX_DIRTY_MODELVIEW);
+    g_gx.nrm_mtx[slot][0][0] = src[0]; g_gx.nrm_mtx[slot][0][1] = src[1]; g_gx.nrm_mtx[slot][0][2] = src[2];
+    g_gx.nrm_mtx[slot][1][0] = src[4]; g_gx.nrm_mtx[slot][1][1] = src[5]; g_gx.nrm_mtx[slot][1][2] = src[6];
+    g_gx.nrm_mtx[slot][2][0] = src[8]; g_gx.nrm_mtx[slot][2][1] = src[9]; g_gx.nrm_mtx[slot][2][2] = src[10];
 }
 
 void GXLoadTexMtxImm(const void* mtx, u32 id, u32 type) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEXGEN);
     int slot = pc_tex_mtx_id_to_slot((int)id);
-    if (slot >= 0 && slot < 10) memcpy(g_gx.tex_mtx[slot], mtx, sizeof(float) * 12);
+    if (slot < 0 || slot >= 10) return;
+    if (memcmp(g_gx.tex_mtx[slot], mtx, sizeof(float) * 12) == 0) return;
+    DIRTY(PC_GX_DIRTY_TEXGEN);
+    memcpy(g_gx.tex_mtx[slot], mtx, sizeof(float) * 12);
 }
 
 void GXSetCurrentMtx(u32 id) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_MODELVIEW);
     u32 slot = id / 3;
-    if (slot < 10) g_gx.current_mtx = slot;
+    if (slot >= 10 || g_gx.current_mtx == (int)slot) return;
+    DIRTY(PC_GX_DIRTY_MODELVIEW);
+    g_gx.current_mtx = slot;
+}
+
+/* Last GL viewport/scissor actually applied. J2D setPort re-sends both every
+ * frame with unchanged values; comparing applied GL state (which folds in
+ * window size and aspect mode) lets those calls skip the batch drain.
+ * Invalidated wherever raw GL calls bypass the setters. */
+static struct { int valid, x, y, w, h; double n, f; } s_gl_viewport;
+static struct { int valid, x, y, w, h; } s_gl_scissor;
+
+void pc_gx_viewport_state_invalidate(void) {
+    s_gl_viewport.valid = 0;
+    s_gl_scissor.valid = 0;
 }
 
 void GXSetViewport(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz) {
+    int gl_x, gl_y, gl_w, gl_h;
+
     g_gx.viewport[0] = left;
     g_gx.viewport[1] = top;
     g_gx.viewport[2] = wd;
@@ -1019,17 +1338,34 @@ void GXSetViewport(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz) {
             }
         }
 
-        int gl_x = (int)(adj_left * sx);
-        int gl_w = (int)(adj_wd * sx);
-        int gl_h = (int)(ht * sy);
-        int gl_y = g_pc_window_h - (int)(top * sy) - gl_h;
-        glViewport(gl_x, gl_y, gl_w, gl_h);
+        gl_x = (int)(adj_left * sx);
+        gl_w = (int)(adj_wd * sx);
+        gl_h = (int)(ht * sy);
+        gl_y = g_pc_window_h - (int)(top * sy) - gl_h;
     }
 #else
     /* GX is Y-down, GL is Y-up */
-    glViewport((int)left, PC_GC_HEIGHT - (int)top - (int)ht, (int)wd, (int)ht);
+    gl_x = (int)left;
+    gl_w = (int)wd;
+    gl_h = (int)ht;
+    gl_y = PC_GC_HEIGHT - (int)top - gl_h;
 #endif
+
+    if (s_gl_viewport.valid && gl_x == s_gl_viewport.x && gl_y == s_gl_viewport.y &&
+        gl_w == s_gl_viewport.w && gl_h == s_gl_viewport.h &&
+        (double)nearz == s_gl_viewport.n && (double)farz == s_gl_viewport.f)
+        return;
+
+    pc_gx_draw_pending(); /* glViewport is not dirty-tracked */
+    glViewport(gl_x, gl_y, gl_w, gl_h);
     glDepthRange((double)nearz, (double)farz);
+    s_gl_viewport.valid = 1;
+    s_gl_viewport.x = gl_x;
+    s_gl_viewport.y = gl_y;
+    s_gl_viewport.w = gl_w;
+    s_gl_viewport.h = gl_h;
+    s_gl_viewport.n = (double)nearz;
+    s_gl_viewport.f = (double)farz;
 }
 
 void GXSetViewportJitter(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz, u32 field) {
@@ -1037,25 +1373,42 @@ void GXSetViewportJitter(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz,
 }
 
 void GXSetScissor(u32 left, u32 top, u32 wd, u32 ht) {
+    int gl_x, gl_y, gl_w, gl_h;
+
     g_gx.scissor[0] = left;
     g_gx.scissor[1] = top;
     g_gx.scissor[2] = wd;
     g_gx.scissor[3] = ht;
-    glEnable(GL_SCISSOR_TEST);
 #ifdef PC_ENHANCEMENTS
     {
         float sx = (float)g_pc_window_w / (float)PC_GC_WIDTH;
         float sy = (float)g_pc_window_h / (float)PC_GC_HEIGHT;
-        int gl_x = (int)(left * sx);
-        int gl_w = (int)(wd * sx);
-        int gl_h = (int)(ht * sy);
-        int gl_y = g_pc_window_h - (int)(top * sy) - gl_h;
-        glScissor(gl_x, gl_y, gl_w, gl_h);
+        gl_x = (int)(left * sx);
+        gl_w = (int)(wd * sx);
+        gl_h = (int)(ht * sy);
+        gl_y = g_pc_window_h - (int)(top * sy) - gl_h;
     }
 #else
     /* GX is Y-down, GL is Y-up */
-    glScissor(left, PC_GC_HEIGHT - top - ht, wd, ht);
+    gl_x = (int)left;
+    gl_w = (int)wd;
+    gl_h = (int)ht;
+    gl_y = PC_GC_HEIGHT - (int)top - (int)ht;
 #endif
+
+    /* Cache validity implies GL_SCISSOR_TEST is enabled */
+    if (s_gl_scissor.valid && gl_x == s_gl_scissor.x && gl_y == s_gl_scissor.y &&
+        gl_w == s_gl_scissor.w && gl_h == s_gl_scissor.h)
+        return;
+
+    pc_gx_draw_pending(); /* glScissor is not dirty-tracked */
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(gl_x, gl_y, gl_w, gl_h);
+    s_gl_scissor.valid = 1;
+    s_gl_scissor.x = gl_x;
+    s_gl_scissor.y = gl_y;
+    s_gl_scissor.w = gl_w;
+    s_gl_scissor.h = gl_h;
 }
 
 void GXSetScissorBoxOffset(s32 x, s32 y) { (void)x; (void)y; }
@@ -1074,6 +1427,7 @@ void GXGetVtxAttrFmt(u32 idx, u32 attr, u32* compCnt, u32* compType, u8* shift) 
 /* --- TEV Configuration --- */
 void GXSetNumTevStages(u8 nStages) {
     pc_gx_flush_if_begin_complete();
+    if (g_gx.num_tev_stages == nStages) return;
     DIRTY(PC_GX_DIRTY_TEV_STAGES);
     g_gx.num_tev_stages = nStages;
 }
@@ -1113,126 +1467,160 @@ void GXSetTevOp(u32 stage, u32 mode) {
 
 void GXSetTevColorIn(u32 stage, u32 a, u32 b, u32 c, u32 d) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEV_STAGES);
     if (stage < 16) {
-        g_gx.tev_stages[stage].color_a = a;
-        g_gx.tev_stages[stage].color_b = b;
-        g_gx.tev_stages[stage].color_c = c;
-        g_gx.tev_stages[stage].color_d = d;
+        PCGXTevStage* ts = &g_gx.tev_stages[stage];
+        if (ts->color_a == (int)a && ts->color_b == (int)b &&
+            ts->color_c == (int)c && ts->color_d == (int)d) return;
+        DIRTY(PC_GX_DIRTY_TEV_STAGES);
+        ts->color_a = a;
+        ts->color_b = b;
+        ts->color_c = c;
+        ts->color_d = d;
     }
 }
 
 void GXSetTevAlphaIn(u32 stage, u32 a, u32 b, u32 c, u32 d) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEV_STAGES);
     if (stage < 16) {
-        g_gx.tev_stages[stage].alpha_a = a;
-        g_gx.tev_stages[stage].alpha_b = b;
-        g_gx.tev_stages[stage].alpha_c = c;
-        g_gx.tev_stages[stage].alpha_d = d;
+        PCGXTevStage* ts = &g_gx.tev_stages[stage];
+        if (ts->alpha_a == (int)a && ts->alpha_b == (int)b &&
+            ts->alpha_c == (int)c && ts->alpha_d == (int)d) return;
+        DIRTY(PC_GX_DIRTY_TEV_STAGES);
+        ts->alpha_a = a;
+        ts->alpha_b = b;
+        ts->alpha_c = c;
+        ts->alpha_d = d;
     }
 }
 
 void GXSetTevColorOp(u32 stage, u32 op, u32 bias, u32 scale, GXBool clamp, u32 out_reg) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEV_STAGES);
     if (stage < 16) {
-        g_gx.tev_stages[stage].color_op = op;
-        g_gx.tev_stages[stage].color_bias = bias;
-        g_gx.tev_stages[stage].color_scale = scale;
-        g_gx.tev_stages[stage].color_clamp = clamp;
-        g_gx.tev_stages[stage].color_out = out_reg;
+        PCGXTevStage* ts = &g_gx.tev_stages[stage];
+        if (ts->color_op == (int)op && ts->color_bias == (int)bias &&
+            ts->color_scale == (int)scale && ts->color_clamp == (int)clamp &&
+            ts->color_out == (int)out_reg) return;
+        DIRTY(PC_GX_DIRTY_TEV_STAGES);
+        ts->color_op = op;
+        ts->color_bias = bias;
+        ts->color_scale = scale;
+        ts->color_clamp = clamp;
+        ts->color_out = out_reg;
     }
 }
 
 void GXSetTevAlphaOp(u32 stage, u32 op, u32 bias, u32 scale, GXBool clamp, u32 out_reg) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEV_STAGES);
     if (stage < 16) {
-        g_gx.tev_stages[stage].alpha_op = op;
-        g_gx.tev_stages[stage].alpha_bias = bias;
-        g_gx.tev_stages[stage].alpha_scale = scale;
-        g_gx.tev_stages[stage].alpha_clamp = clamp;
-        g_gx.tev_stages[stage].alpha_out = out_reg;
+        PCGXTevStage* ts = &g_gx.tev_stages[stage];
+        if (ts->alpha_op == (int)op && ts->alpha_bias == (int)bias &&
+            ts->alpha_scale == (int)scale && ts->alpha_clamp == (int)clamp &&
+            ts->alpha_out == (int)out_reg) return;
+        DIRTY(PC_GX_DIRTY_TEV_STAGES);
+        ts->alpha_op = op;
+        ts->alpha_bias = bias;
+        ts->alpha_scale = scale;
+        ts->alpha_clamp = clamp;
+        ts->alpha_out = out_reg;
     }
 }
 
 void GXSetTevOrder(u32 stage, u32 coord, u32 map, u32 color) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEV_STAGES | PC_GX_DIRTY_TEXTURES);
     if (stage < 16) {
-        g_gx.tev_stages[stage].tex_coord = coord;
-        g_gx.tev_stages[stage].tex_map = map;
-        g_gx.tev_stages[stage].color_chan = color;
+        PCGXTevStage* ts = &g_gx.tev_stages[stage];
+        if (ts->tex_coord == (int)coord && ts->tex_map == (int)map &&
+            ts->color_chan == (int)color) return;
+        DIRTY(PC_GX_DIRTY_TEV_STAGES | PC_GX_DIRTY_TEXTURES);
+        ts->tex_coord = coord;
+        ts->tex_map = map;
+        ts->color_chan = color;
     }
 }
 
 void GXSetTevColor(u32 id, u32 color_packed) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEV_COLORS);
     /* TEVREG0 uses GXColor fields (byte unpack), others come from EmuColor.raw (shift unpack) */
     if (id < GX_MAX_TEVREG) {
+        float c[4];
         if (id == GX_TEVREG0) {
-            pc_unpack_gxcolor_f(color_packed, g_gx.tev_colors[id]);
+            pc_unpack_gxcolor_f(color_packed, c);
         } else {
-            pc_unpack_rgba8f(color_packed, g_gx.tev_colors[id]);
+            pc_unpack_rgba8f(color_packed, c);
         }
+        if (memcmp(g_gx.tev_colors[id], c, sizeof(c)) == 0) return;
+        DIRTY(PC_GX_DIRTY_TEV_COLORS);
+        memcpy(g_gx.tev_colors[id], c, sizeof(c));
     }
 }
 
 void GXSetTevColorS10(u32 id, s16 r, s16 g, s16 b, s16 a) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEV_COLORS);
     if (id < GX_MAX_TEVREG) {
-        g_gx.tev_colors[id][0] = r / 255.0f;
-        g_gx.tev_colors[id][1] = g / 255.0f;
-        g_gx.tev_colors[id][2] = b / 255.0f;
-        g_gx.tev_colors[id][3] = a / 255.0f;
+        float c[4] = { r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f };
+        if (memcmp(g_gx.tev_colors[id], c, sizeof(c)) == 0) return;
+        DIRTY(PC_GX_DIRTY_TEV_COLORS);
+        memcpy(g_gx.tev_colors[id], c, sizeof(c));
     }
 }
 
 void GXSetTevKColor(u32 id, u32 color_packed) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_KONST);
     if (id < 4) {
-        pc_unpack_rgba8f(color_packed, g_gx.tev_k_colors[id]);
+        float c[4];
+        pc_unpack_rgba8f(color_packed, c);
+        if (memcmp(g_gx.tev_k_colors[id], c, sizeof(c)) == 0) return;
+        DIRTY(PC_GX_DIRTY_KONST);
+        memcpy(g_gx.tev_k_colors[id], c, sizeof(c));
     }
 }
 
 void GXSetTevKColorSel(u32 stage, u32 sel) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEV_STAGES);
-    if (stage < 16) g_gx.tev_stages[stage].k_color_sel = sel;
+    if (stage < 16 && g_gx.tev_stages[stage].k_color_sel != (int)sel) {
+        DIRTY(PC_GX_DIRTY_TEV_STAGES);
+        g_gx.tev_stages[stage].k_color_sel = sel;
+    }
 }
 void GXSetTevKAlphaSel(u32 stage, u32 sel) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEV_STAGES);
-    if (stage < 16) g_gx.tev_stages[stage].k_alpha_sel = sel;
+    if (stage < 16 && g_gx.tev_stages[stage].k_alpha_sel != (int)sel) {
+        DIRTY(PC_GX_DIRTY_TEV_STAGES);
+        g_gx.tev_stages[stage].k_alpha_sel = sel;
+    }
 }
 
 void GXSetTevSwapMode(u32 stage, u32 ras_sel, u32 tex_sel) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEV_STAGES);
     if (stage < 16) {
-        g_gx.tev_stages[stage].ras_swap = ras_sel;
-        g_gx.tev_stages[stage].tex_swap = tex_sel;
+        PCGXTevStage* ts = &g_gx.tev_stages[stage];
+        if (ts->ras_swap == (int)ras_sel && ts->tex_swap == (int)tex_sel) return;
+        DIRTY(PC_GX_DIRTY_TEV_STAGES);
+        ts->ras_swap = ras_sel;
+        ts->tex_swap = tex_sel;
     }
 }
 
 void GXSetTevSwapModeTable(u32 table, u32 red, u32 green, u32 blue, u32 alpha) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_SWAP_TABLES);
     if (table < 4) {
-        g_gx.tev_swap_table[table].r = red;
-        g_gx.tev_swap_table[table].g = green;
-        g_gx.tev_swap_table[table].b = blue;
-        g_gx.tev_swap_table[table].a = alpha;
+        PCGXTevSwapTable* t = &g_gx.tev_swap_table[table];
+        if (t->r == (int)red && t->g == (int)green &&
+            t->b == (int)blue && t->a == (int)alpha) return;
+        DIRTY(PC_GX_DIRTY_SWAP_TABLES);
+        t->r = red;
+        t->g = green;
+        t->b = blue;
+        t->a = alpha;
     }
 }
 
 /* --- Alpha / Depth / Blend --- */
 void GXSetAlphaCompare(u32 comp0, u8 ref0, u32 op, u32 comp1, u8 ref1) {
     pc_gx_flush_if_begin_complete();
+    if (g_gx.alpha_comp0 == (int)comp0 && g_gx.alpha_ref0 == (int)ref0 &&
+        g_gx.alpha_op == (int)op && g_gx.alpha_comp1 == (int)comp1 &&
+        g_gx.alpha_ref1 == (int)ref1) return;
     DIRTY(PC_GX_DIRTY_ALPHA_CMP);
     g_gx.alpha_comp0 = comp0;
     g_gx.alpha_ref0 = ref0;
@@ -1243,6 +1631,8 @@ void GXSetAlphaCompare(u32 comp0, u8 ref0, u32 op, u32 comp1, u8 ref1) {
 
 void GXSetBlendMode(u32 type, u32 src, u32 dst, u32 logic_op) {
     pc_gx_flush_if_begin_complete();
+    if (g_gx.blend_mode == (int)type && g_gx.blend_src == (int)src &&
+        g_gx.blend_dst == (int)dst && g_gx.blend_logic_op == (int)logic_op) return;
     DIRTY(PC_GX_DIRTY_BLEND);
     g_gx.blend_mode = type;
     g_gx.blend_src = src;
@@ -1252,6 +1642,9 @@ void GXSetBlendMode(u32 type, u32 src, u32 dst, u32 logic_op) {
 
 void GXSetZMode(GXBool compare_enable, u32 func, GXBool update_enable) {
     pc_gx_flush_if_begin_complete();
+    if (g_gx.z_compare_enable == (int)compare_enable &&
+        g_gx.z_compare_func == (int)func &&
+        g_gx.z_update_enable == (int)update_enable) return;
     DIRTY(PC_GX_DIRTY_DEPTH);
     g_gx.z_compare_enable = compare_enable;
     g_gx.z_compare_func = func;
@@ -1260,11 +1653,13 @@ void GXSetZMode(GXBool compare_enable, u32 func, GXBool update_enable) {
 
 void GXSetColorUpdate(GXBool enable) {
     pc_gx_flush_if_begin_complete();
+    if (g_gx.color_update_enable == (int)enable) return;
     DIRTY(PC_GX_DIRTY_COLOR_MASK);
     g_gx.color_update_enable = enable;
 }
 void GXSetAlphaUpdate(GXBool enable) {
     pc_gx_flush_if_begin_complete();
+    if (g_gx.alpha_update_enable == (int)enable) return;
     DIRTY(PC_GX_DIRTY_COLOR_MASK);
     g_gx.alpha_update_enable = enable;
 }
@@ -1277,24 +1672,27 @@ void GXSetPixelFmt(u32 pix_fmt, u32 z_fmt) { (void)pix_fmt; (void)z_fmt; }
 
 void GXSetCullMode(u32 mode) {
     pc_gx_flush_if_begin_complete();
+    if (g_pc_model_viewer_no_cull) mode = GX_CULL_NONE;
+    if (g_gx.cull_mode == (int)mode) return;
     DIRTY(PC_GX_DIRTY_CULL);
-    g_gx.cull_mode = g_pc_model_viewer_no_cull ? GX_CULL_NONE : mode;
+    g_gx.cull_mode = mode;
 }
 void GXSetCoPlanar(GXBool enable) { (void)enable; }
 
 /* --- Fog --- */
 void GXSetFog(u32 type, f32 startz, f32 endz, f32 nearz, f32 farz, GXColor color) {
     pc_gx_flush_if_begin_complete();
+    float c[4] = { color.r / 255.0f, color.g / 255.0f, color.b / 255.0f, color.a / 255.0f };
+    if (g_gx.fog_type == (int)type && g_gx.fog_start == startz &&
+        g_gx.fog_end == endz && g_gx.fog_near == nearz && g_gx.fog_far == farz &&
+        memcmp(g_gx.fog_color, c, sizeof(c)) == 0) return;
     DIRTY(PC_GX_DIRTY_FOG);
     g_gx.fog_type = type;
     g_gx.fog_start = startz;
     g_gx.fog_end = endz;
     g_gx.fog_near = nearz;
     g_gx.fog_far = farz;
-    g_gx.fog_color[0] = color.r / 255.0f;
-    g_gx.fog_color[1] = color.g / 255.0f;
-    g_gx.fog_color[2] = color.b / 255.0f;
-    g_gx.fog_color[3] = color.a / 255.0f;
+    memcpy(g_gx.fog_color, c, sizeof(c));
 }
 
 void GXInitFogAdjTable(void* table, u16 width, f32 projmtx[4][4]) {
@@ -1322,20 +1720,39 @@ static int pc_gx_chan_index(u32 chan) {
 
 void GXSetNumChans(u8 nChans) {
     pc_gx_flush_if_begin_complete();
+    if (g_gx.num_chans == nChans) return;
     DIRTY(PC_GX_DIRTY_LIGHTING);
     g_gx.num_chans = nChans;
+}
+
+static int pc_gx_chan_ctrl_same(int i, GXBool enable, u32 amb_src, u32 mat_src,
+                                u32 light_mask, u32 diff_fn, u32 attn_fn) {
+    return g_gx.chan_ctrl_enable[i] == (int)enable &&
+           g_gx.chan_ctrl_amb_src[i] == (int)amb_src &&
+           g_gx.chan_ctrl_mat_src[i] == (int)mat_src &&
+           g_gx.chan_ctrl_light_mask[i] == (int)light_mask &&
+           g_gx.chan_ctrl_diff_fn[i] == (int)diff_fn &&
+           g_gx.chan_ctrl_attn_fn[i] == (int)attn_fn;
 }
 
 void GXSetChanCtrl(u32 chan, GXBool enable, u32 amb_src, u32 mat_src,
                    u32 light_mask, u32 diff_fn, u32 attn_fn) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_LIGHTING);
     int idx = pc_gx_chan_index(chan);
     if (idx >= 0) {
         int is_combined = (chan >= GX_COLOR0A0);
         int is_alpha = (chan == GX_ALPHA0 || chan == GX_ALPHA1);
+        int set_color = !is_alpha || is_combined;
+        int set_alpha = is_alpha || is_combined;
 
-        if (!is_alpha || is_combined) {
+        if ((!set_color || pc_gx_chan_ctrl_same(idx * 2, enable, amb_src, mat_src,
+                                                light_mask, diff_fn, attn_fn)) &&
+            (!set_alpha || pc_gx_chan_ctrl_same(idx * 2 + 1, enable, amb_src, mat_src,
+                                                light_mask, diff_fn, attn_fn))) {
+            return;
+        }
+        DIRTY(PC_GX_DIRTY_LIGHTING);
+        if (set_color) {
             g_gx.chan_ctrl_enable[idx * 2] = enable;
             g_gx.chan_ctrl_amb_src[idx * 2] = amb_src;
             g_gx.chan_ctrl_mat_src[idx * 2] = mat_src;
@@ -1343,7 +1760,7 @@ void GXSetChanCtrl(u32 chan, GXBool enable, u32 amb_src, u32 mat_src,
             g_gx.chan_ctrl_diff_fn[idx * 2] = diff_fn;
             g_gx.chan_ctrl_attn_fn[idx * 2] = attn_fn;
         }
-        if (is_alpha || is_combined) {
+        if (set_alpha) {
             g_gx.chan_ctrl_enable[idx * 2 + 1] = enable;
             g_gx.chan_ctrl_amb_src[idx * 2 + 1] = amb_src;
             g_gx.chan_ctrl_mat_src[idx * 2 + 1] = mat_src;
@@ -1356,19 +1773,25 @@ void GXSetChanCtrl(u32 chan, GXBool enable, u32 amb_src, u32 mat_src,
 
 void GXSetChanAmbColor(u32 chan, u32 color_packed) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_LIGHTING);
     int idx = pc_gx_chan_index(chan);
     if (idx >= 0 && idx < 2) {
-        pc_unpack_gxcolor_f(color_packed, g_gx.chan_amb_color[idx]);
+        float c[4];
+        pc_unpack_gxcolor_f(color_packed, c);
+        if (memcmp(g_gx.chan_amb_color[idx], c, sizeof(c)) == 0) return;
+        DIRTY(PC_GX_DIRTY_LIGHTING);
+        memcpy(g_gx.chan_amb_color[idx], c, sizeof(c));
     }
 }
 
 void GXSetChanMatColor(u32 chan, u32 color_packed) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_LIGHTING);
     int idx = pc_gx_chan_index(chan);
     if (idx >= 0 && idx < 2) {
-        pc_unpack_gxcolor_f(color_packed, g_gx.chan_mat_color[idx]);
+        float c[4];
+        pc_unpack_gxcolor_f(color_packed, c);
+        if (memcmp(g_gx.chan_mat_color[idx], c, sizeof(c)) == 0) return;
+        DIRTY(PC_GX_DIRTY_LIGHTING);
+        memcpy(g_gx.chan_mat_color[idx], c, sizeof(c));
     }
 }
 
@@ -1495,7 +1918,6 @@ void GXInitLightAttnK(void* lt, f32 k0, f32 k1, f32 k2) {
 }
 void GXLoadLightObjImm(void* lt, u32 light) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_LIGHTING);
     PCGXLightObjInternal* l = (PCGXLightObjInternal*)lt;
     int slot = -1;
     for (int i = 0; i < 8; i++) {
@@ -1503,6 +1925,18 @@ void GXLoadLightObjImm(void* lt, u32 light) {
     }
     if (slot < 0) return;
 
+    float c[4];
+    pc_unpack_gxcolor_f(l->color, c);
+    if (g_gx.lights[slot].pos[0] == l->px && g_gx.lights[slot].pos[1] == l->py &&
+        g_gx.lights[slot].pos[2] == l->pz && g_gx.lights[slot].dir[0] == l->nx &&
+        g_gx.lights[slot].dir[1] == l->ny && g_gx.lights[slot].dir[2] == l->nz &&
+        g_gx.lights[slot].a0 == l->a0 && g_gx.lights[slot].a1 == l->a1 &&
+        g_gx.lights[slot].a2 == l->a2 && g_gx.lights[slot].k0 == l->k0 &&
+        g_gx.lights[slot].k1 == l->k1 && g_gx.lights[slot].k2 == l->k2 &&
+        memcmp(g_gx.lights[slot].color, c, sizeof(c)) == 0) {
+        return;
+    }
+    DIRTY(PC_GX_DIRTY_LIGHTING);
     g_gx.lights[slot].pos[0] = l->px;
     g_gx.lights[slot].pos[1] = l->py;
     g_gx.lights[slot].pos[2] = l->pz;
@@ -1515,7 +1949,7 @@ void GXLoadLightObjImm(void* lt, u32 light) {
     g_gx.lights[slot].k0 = l->k0;
     g_gx.lights[slot].k1 = l->k1;
     g_gx.lights[slot].k2 = l->k2;
-    pc_unpack_gxcolor_f(l->color, g_gx.lights[slot].color);
+    memcpy(g_gx.lights[slot].color, c, sizeof(c));
 }
 void GXGetLightPos(void* lt, f32* x, f32* y, f32* z) {
     PCGXLightObjInternal* l = (PCGXLightObjInternal*)lt;
@@ -1529,13 +1963,19 @@ void GXGetLightColor(void* lt, void* color) {
 /* --- Texture Coordinate Generation --- */
 void GXSetNumTexGens(u8 n) {
     pc_gx_flush_if_begin_complete();
+    if (g_gx.num_tex_gens == n) return;
     DIRTY(PC_GX_DIRTY_TEXGEN);
     g_gx.num_tex_gens = n;
 }
 void GXSetTexCoordGen2(u32 dst, u32 func, u32 src, u32 mtx, GXBool normalize, u32 postmtx) {
     pc_gx_flush_if_begin_complete();
-    DIRTY(PC_GX_DIRTY_TEXGEN);
     if (dst < 8) {
+        if (g_gx.tex_gen_type[dst] == (int)func &&
+            g_gx.tex_gen_src[dst] == (int)src &&
+            g_gx.tex_gen_mtx[dst] == (int)mtx) {
+            return;
+        }
+        DIRTY(PC_GX_DIRTY_TEXGEN);
         g_gx.tex_gen_type[dst] = func;
         g_gx.tex_gen_src[dst] = src;
         g_gx.tex_gen_mtx[dst] = mtx;
@@ -1564,6 +2004,7 @@ void GXCopyDisp(void* dest, GXBool clear) {
     /* On PC we render to the back buffer directly; swap happens in VIWaitForRetrace.
      * Just flush pending geometry — do NOT swap or clear here. */
     pc_gx_commit_pending_and_flush();
+    pc_gx_draw_pending();
     (void)dest;
     (void)clear;
 }
@@ -1591,8 +2032,9 @@ void GXAdjustForOverscan(void* rmin, void* rmout, u16 hor, u16 ver) {
     memcpy(rmout, rmin, sizeof(u32) * 16);
 }
 
-static void pc_gx_copy_tex_execute(void* dest, GXBool clear) {
+static void pc_gx_copy_tex_execute_impl(void* dest, GXBool clear) {
     pc_gx_commit_pending_and_flush();
+    pc_gx_draw_pending(); /* everything must hit the framebuffer before glReadPixels */
 
     if (!dest) return;
 
@@ -1650,6 +2092,8 @@ static void pc_gx_copy_tex_execute(void* dest, GXBool clear) {
         GLuint efb_tex;
         glGenTextures(1, &efb_tex);
         glBindTexture(GL_TEXTURE_2D, efb_tex);
+        pc_profiler_add_count_texture_bind();
+        pc_gx_texture_bind_cache_invalidate();
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, read_wd, read_ht, 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, rgba);
@@ -1659,6 +2103,10 @@ static void pc_gx_copy_tex_execute(void* dest, GXBool clear) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         pc_gx_efb_capture_store((u32)(uintptr_t)dest, efb_tex);
         glBindTexture(GL_TEXTURE_2D, 0);
+        pc_profiler_add_count_texture_bind();
+        pc_gx_texture_bind_cache_invalidate();
+        /* Unit 0 binding was clobbered; force rebind at next flush */
+        DIRTY(PC_GX_DIRTY_TEXTURES);
     }
 #else
     if (g_gx.tex_copy_fmt == 0x4) {
@@ -1694,6 +2142,13 @@ static void pc_gx_copy_tex_execute(void* dest, GXBool clear) {
 
     free(rgba);
     (void)clear;
+}
+
+/* Times the synchronous glReadPixels stall (called via GXCopyDisp and DL replay) */
+static void pc_gx_copy_tex_execute(void* dest, GXBool clear) {
+    Uint64 prof_start = pc_profiler_begin_timer();
+    pc_gx_copy_tex_execute_impl(dest, clear);
+    pc_profiler_add_time(PC_PROF_TIMER_EFB_COPY, prof_start);
 }
 
 void GXSetTexCopySrc(u16 left, u16 top, u16 wd, u16 ht) {
@@ -1740,7 +2195,7 @@ void* GXInit(void* base, u32 size) {
 }
 
 void GXSetMisc(u32 token, u32 val) { (void)token; (void)val; }
-void GXFlush(void) { glFlush(); }
+void GXFlush(void) { pc_gx_draw_pending(); glFlush(); }
 void GXResetWriteGatherPipe(void) {}
 void GXAbortFrame(void) {}
 void GXSetDrawSync(u16 token) { (void)token; }
@@ -1818,6 +2273,9 @@ u32 GXEndDisplayList(void) {
 void GXCallDisplayList(void* list, u32 nbytes) {
     if (!list || nbytes == 0) return;
 
+    Uint64 prof_start = pc_profiler_begin_timer();
+#define PC_GX_DL_RETURN() do { pc_profiler_add_time(PC_PROF_TIMER_DISPLAY_LIST, prof_start); return; } while (0)
+
     const u8* p = (const u8*)list;
     u32 off = 0;
 
@@ -1829,7 +2287,7 @@ void GXCallDisplayList(void* list, u32 nbytes) {
         switch (op) {
             case PCGX_DL_OP_TEXCOPY_SRC: {
                 u32 v[4];
-                if (off + sizeof(v) > nbytes) return;
+                if (off + sizeof(v) > nbytes) PC_GX_DL_RETURN();
                 memcpy(v, p + off, sizeof(v));
                 off += sizeof(v);
                 GXSetTexCopySrc((u16)v[0], (u16)v[1], (u16)v[2], (u16)v[3]);
@@ -1837,7 +2295,7 @@ void GXCallDisplayList(void* list, u32 nbytes) {
             }
             case PCGX_DL_OP_TEXCOPY_DST: {
                 u32 v[4];
-                if (off + sizeof(v) > nbytes) return;
+                if (off + sizeof(v) > nbytes) PC_GX_DL_RETURN();
                 memcpy(v, p + off, sizeof(v));
                 off += sizeof(v);
                 GXSetTexCopyDst((u16)v[0], (u16)v[1], v[2], (GXBool)(v[3] ? 1 : 0));
@@ -1848,7 +2306,7 @@ void GXCallDisplayList(void* list, u32 nbytes) {
             case PCGX_DL_OP_COPY_TEX: {
                 u64 dest64 = 0;
                 u32 clear = 0;
-                if (off + sizeof(dest64) + sizeof(clear) > nbytes) return;
+                if (off + sizeof(dest64) + sizeof(clear) > nbytes) PC_GX_DL_RETURN();
                 memcpy(&dest64, p + off, sizeof(dest64));
                 off += sizeof(dest64);
                 memcpy(&clear, p + off, sizeof(clear));
@@ -1857,9 +2315,12 @@ void GXCallDisplayList(void* list, u32 nbytes) {
                 break;
             }
             default:
-                return;
+                PC_GX_DL_RETURN();
         }
     }
+
+    pc_profiler_add_time(PC_PROF_TIMER_DISPLAY_LIST, prof_start);
+#undef PC_GX_DL_RETURN
 }
 
 /* --- Indirect Texture --- */

@@ -76,6 +76,7 @@ typedef struct my_room_clock_info_s {
     int tick1;     /* set on frame 45 */
     int tick_stop; /* set on frame 0 */
     int frame;     /* 0-119 */
+    f32 phase_frame;
 } aMR_clock_info_c;
 
 typedef int (*aMR_JUDGE_BREED_NEW_FTR_PROC)(GAME* game, u16 ftr_no, int* ut_x, int* ut_z, u16* rotation,
@@ -165,6 +166,9 @@ typedef struct room_rsv_ftr_s {
     s16 layer;
     s16 frames;
     s16 initial_frames_num;
+#ifdef TARGET_PC
+    f32 frame_accum;
+#endif
     int ut_x;
     int ut_z;
 } aMR_rsv_ftr_c;
@@ -195,6 +199,9 @@ typedef struct emu_info_s {
     char* famicom_names_p;
     s16 save_msg_timer;
     s16 external_rom;
+#ifdef TARGET_PC
+    f32 save_msg_timer_accum;
+#endif
 } aMR_emu_info_c;
 
 typedef void (*aMR_GOKI_CT_PROC)(ACTOR*, GAME*);
@@ -228,8 +235,8 @@ struct my_room_actor_s {
     s16 move_angle;
     xyz_t nice_pos;
     aMR_Clip_c clip;
-    s16 sit_timer;
-    s16 bed_timer;
+    f32 sit_timer;
+    f32 bed_timer;
     aMR_leaf_info_c leaf_info;
     aMR_pickup_info_c pickup_info;
     aMR_rsv_ftr_c rsv_ftr[3];
@@ -239,7 +246,7 @@ struct my_room_actor_s {
     int _3F4;
     s16 demo_flag;
     s16 demo_ftrID;
-    int _3FC;
+    f32 switch_timer_accum;
     s16 pull_timer;
     s16 push_timer;
     s16 msg_timer;
@@ -268,8 +275,11 @@ struct my_room_actor_s {
     s16 player_surprise_angle_y;
     s16 switch_timer;
     s16 force_open_demo_flag;
-    int _4F0;
-    int _4F4;
+    f32 pull_timer_accum;
+    f32 push_timer_accum;
+#ifdef TARGET_PC
+    f32 tex_animation_accum;
+#endif
     int room_msg_flag;
     int haniwa_step_idx;
     aMR_parent_ftr_c parent_ftr;

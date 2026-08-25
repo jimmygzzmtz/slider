@@ -25,14 +25,14 @@ struct bee_actor_s {
     f32 speed;
     f32 start_frame;
     f32 pos_y;
-    int alpha;
+    f32 alpha;
     s16 bobbing_counter;
     s16 add_angle;
     s16 fly_angle[2];
     s16 base_angle;
-    int catch_delay_frames;
+    f32 catch_delay_frames;
     ACTOR* insect_actor;
-    int disappear_timer;
+    f32 disappear_timer;
 };
 
 extern ACTOR_PROFILE Bee_Profile;

@@ -27,6 +27,9 @@
 #include "pc_save_bswap.h"
 #include "pc_settings.h"
 #include "m_cockroach.h"
+#include "m_all_grow_ovl.h"
+#include "m_home.h"
+#include "lb_rtc.h"
 #include "game.h"
 
 #include <stdio.h>
@@ -234,6 +237,59 @@ static void pc_ensure_save_dirs(void) {
 }
 
 static int pc_save_write_gci_to(const char* gci_path, const char* tmp_path);
+
+/* mCD_get_land_copyProtect */
+static u16 pc_get_land_copy_protect(void) {
+    u16 code = (u16)RANDOM(0xFFF0);
+    return (u16)(code + 1);
+}
+
+/* mCD_CheckResetCode: TRUE if no reset code armed (birthday clears it) */
+static int pc_check_reset_code(Private_c* priv) {
+    if (priv->state_flags & mPr_FLAG_BIRTHDAY_ACTIVE) {
+        priv->reset_code = 0;
+    }
+    return priv->reset_code == 0;
+}
+
+/* mCD_SetResetCode: arm a nonzero code; still set at next load = reset */
+static void pc_set_reset_code(Private_c* priv) {
+    priv->reset_code = (u32)RANDOM_F(USHT_MAX_S);
+    priv->reset_code++;
+}
+
+/* Money rock / Wisp / Copy Protect. save_mode mirrors GC SaveHome _04:
+ * 0 = full save (clears reset code), nonzero = door save (keeps it armed) */
+static void pc_save_pre_write_side_effects(int save_mode) {
+    Private_c* priv = Now_Private;
+    u16 copy_protect;
+    int i;
+
+    mCkRh_SavePlayTime(Common_Get(player_no));
+
+    if (priv != NULL) {
+        if (save_mode == 0) {
+            priv->reset_code = 0;
+
+            for (i = 0; i < mPr_POCKETS_SLOT_COUNT; i++) {
+                if (ITEM_IS_WISP(priv->inventory.pockets[i])) {
+                    mPr_SetPossessionItem(priv, i, EMPTY_NO, mPr_ITEM_COND_NORMAL);
+                }
+            }
+        } else if (pc_check_reset_code(priv)) {
+            pc_set_reset_code(priv);
+        }
+    }
+
+    if (save_mode == 0) {
+        mAGrw_ClearMoneyStoneShineGround();
+    }
+
+    copy_protect = pc_get_land_copy_protect();
+    Common_Set(copy_protect, copy_protect);
+    Save_Set(copy_protect, copy_protect);
+    Save_Set(travel_hard_time, lbRTC_HardTime());
+}
 
 static int pc_save_write_gci(void) {
     return pc_save_write_gci_to(PC_GCI_PATH, PC_GCI_TMP_PATH);
@@ -788,8 +844,21 @@ int mCD_InitGameStart_bg(int player_no, int card_private_idx, int start_cond, s3
                     }
                 }
                 /* Arm reset code: if player quits without saving, next load detects it */
-                Now_Private->reset_code = (u32)RANDOM_F(USHT_MAX_S);
-                Now_Private->reset_code++;
+                pc_set_reset_code(Now_Private);
+
+                /* GC writes the save (armed code included) back to the card
+                 * here (bg_write_main/bg_write_bk). Persist to disk or the
+                 * armed code never survives a quit and Resetti can't trigger.
+                 * Cond 1 only - matches GC (new players aren't saved yet). */
+                if (start_cond == mCD_START_COND_1) {
+                    u16 copy_protect = pc_get_land_copy_protect();
+                    Common_Set(copy_protect, copy_protect);
+                    Save_Set(copy_protect, copy_protect);
+                    Save_Set(travel_hard_time, lbRTC_HardTime());
+                    if (!pc_save_write_gci()) {
+                        OSReport("[PC] InitGameStart: reset-code persist failed\n");
+                    }
+                }
             }
 
             /* Handle foreigner start conditions */
@@ -806,6 +875,22 @@ int mCD_InitGameStart_bg(int player_no, int card_private_idx, int start_cond, s3
                 Private_c* foreigner = mPr_GetForeignerP();
                 mPr_CopyPrivateInfo(foreigner, &l_mcd_foreigner_file.file.priv);
                 mPr_LoadPak_and_SetPrivateInfo2(foreigner, (u8)player_no);
+                mHm_SetNowHome();
+
+                /* Cond 4 fires on both train rides; write card A only after
+                 * a real home landing (merge left player_no in a home slot). */
+                if (Common_Get(player_no) != mPr_FOREIGNER && Now_Private != NULL) {
+                    u16 copy_protect = pc_get_land_copy_protect();
+                    pc_set_reset_code(Now_Private);
+                    Common_Set(copy_protect, copy_protect);
+                    Save_Set(copy_protect, copy_protect);
+                    Save_Set(travel_hard_time, lbRTC_HardTime());
+                    if (!pc_save_write_gci()) {
+                        OSReport("[PC] InitGameStart: return-home persist failed\n");
+                        if (mounted_chan) *mounted_chan = mCD_SLOT_A;
+                        return mCD_TRANS_ERR_IOERROR;
+                    }
+                }
                 OSReport("[PC] InitGameStart: OUTGOING_FOREIGNER — landed player_no=%d\n",
                          Common_Get(player_no));
             }
@@ -827,16 +912,8 @@ int mCD_SaveHome_bg(int param_1, int* chan) {
     int slot = mCD_GetThisLandSlotNo();
     int result;
 
-    /* Update cockroach "last visited" timestamp before saving.
-     * On GC this was done in mCD_SaveHome_bg_set_data (m_card.c).
-     * Without it, the day gap never resets and cockroaches respawn
-     * every load even after being killed. */
-    mCkRh_SavePlayTime(Common_Get(player_no));
 
-    /* Clear reset code before saving — marks this as a proper shutdown */
-    if (Now_Private != NULL) {
-        Now_Private->reset_code = 0;
-    }
+    pc_save_pre_write_side_effects(param_1);
 
     if (slot == mCD_SLOT_B && l_card_b_gci_path[0] != '\0') {
         /* Visiting Card B's town — save to Card B GCI */
@@ -852,13 +929,6 @@ int mCD_SaveHome_bg(int param_1, int* chan) {
     if (!result) {
         OSReport("[PC] mCD_SaveHome_bg: save failed!\n");
         return mCD_TRANS_ERR_IOERROR;
-    }
-
-    /* Re-arm reset code after successful save — if player quits without
-     * saving again, we'll detect it next load */
-    if (Now_Private != NULL) {
-        Now_Private->reset_code = (u32)RANDOM_F(USHT_MAX_S);
-        Now_Private->reset_code++;
     }
 
     return mCD_TRANS_ERR_NONE;

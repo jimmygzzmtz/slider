@@ -12,6 +12,12 @@
 #include "pc_bswap.h"
 #endif
 
+int g_mPlib_wade_disabled = FALSE;
+
+extern BOOL mPlib_IsWadeDisabled(void) {
+    return g_mPlib_wade_disabled && mEv_CheckTitleDemo() <= 0;
+}
+
 extern cKF_Animation_R_c cKF_ba_r_ply_1_wait1;
 extern cKF_Animation_R_c cKF_ba_r_ply_1_walk1;
 extern cKF_Animation_R_c cKF_ba_r_ply_1_axe1;
@@ -3325,11 +3331,16 @@ extern int mPlib_Check_scoop_after(GAME* game, xyz_t* pos_p, mActor_name_t* item
 
 extern int mPlib_Check_scene_able_change_camera_pos(void) {
     if (mFI_CheckFieldData()) {
+#if PC_ENHANCEMENTS
+        /* C-stick camera now works in every scene */
+        return TRUE;
+#else
         int field_type = mFI_GET_TYPE(mFI_GetFieldId());
 
         return (field_type == mFI_FIELD_NPCROOM0 || field_type == mFI_FIELD_PLAYER0_ROOM ||
                 Save_Get(scene_no) == SCENE_MUSEUM_ROOM_FOSSIL || Save_Get(scene_no) == SCENE_MUSEUM_ROOM_PAINTING ||
                 Save_Get(scene_no) == SCENE_MUSEUM_ROOM_INSECT || Save_Get(scene_no) == SCENE_MUSEUM_ROOM_FISH);
+#endif
     }
 
     return FALSE;
@@ -3707,6 +3718,14 @@ extern int mPlib_check_player_actor_main_index_OutDoorMove2(GAME* game) {
 }
 
 extern int mPlib_check_player_actor_main_index_AllWade(GAME* game) {
+    if (mPlib_IsWadeDisabled()) {
+        xyz_t end_pos;
+
+        if (GET_PLAYER_ACTOR_GAME(game)->Get_WadeEndPos_proc(game, &end_pos)) {
+            return TRUE;
+        }
+    }
+
     if (mPlib_get_player_actor_main_index(game) == mPlayer_INDEX_WADE ||
         mPlib_get_player_actor_main_index(game) == mPlayer_INDEX_DEMO_WADE ||
         mPlib_get_player_actor_main_index(game) == mPlayer_INDEX_WADE_SNOWBALL ||

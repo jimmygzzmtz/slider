@@ -1,6 +1,8 @@
 /* pc_gx_texture.c - GC texture format decoders + 2048-entry texture cache */
 #include "pc_gx_internal.h"
 #include "pc_texture_pack.h"
+#include "pc_profiler.h"
+#include "pc_settings.h"
 #include <dolphin/gx/GXEnum.h>
 #include <stdlib.h>
 
@@ -592,7 +594,7 @@ static void decode_gc_texture(const void* src, u8* dst_rgba, int w, int h, u32 f
     }
 }
 
-void GXLoadTexObj(void* obj, u32 id) {
+static void pc_gx_load_tex_obj_impl(void* obj, u32 id) {
     pc_gx_flush_if_begin_complete();
 
     if (id >= 8 && id != 0xFF && id < 0x100) return;
@@ -607,7 +609,9 @@ void GXLoadTexObj(void* obj, u32 id) {
     u32 tlut_key = (format == GX_TF_C4 || format == GX_TF_C8) ? o[TEXOBJ_TLUT_NAME] : 0xFFFFFFFF;
     u32 tlut_ptr_key = 0;
     u32 tlut_hash_key = 0;
-    u32 filter_mode = o[TEXOBJ_MIN_FILTER];
+    /* The setting is a PC sampler override: enabled preserves the GX
+     * request, while disabled forces nearest-neighbor for every game texture. */
+    u32 filter_mode = g_pc_settings.texture_filtering ? o[TEXOBJ_MIN_FILTER] : GX_NEAR;
 
     if (format == GX_TF_C4 || format == GX_TF_C8) {
         int tlut_name = (int)o[TEXOBJ_TLUT_NAME];
@@ -625,7 +629,10 @@ void GXLoadTexObj(void* obj, u32 id) {
     {
         GLuint efb_tex = pc_gx_efb_capture_find(o[TEXOBJ_IMAGE_PTR]);
         if (efb_tex) {
+            pc_gx_draw_pending();
             glBindTexture(GL_TEXTURE_2D, efb_tex);
+            pc_profiler_add_count_texture_bind();
+            pc_gx_texture_bind_cache_invalidate();
             GLenum gl_filter = filter_mode ? GL_LINEAR : GL_NEAREST;
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gl_filter);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, gl_filter);
@@ -649,9 +656,20 @@ void GXLoadTexObj(void* obj, u32 id) {
     if (cached) {
         tex_cache_hits++;
         GLuint tex = cached->gl_tex;
-        glBindTexture(GL_TEXTURE_2D, tex);
+        int slot_changed = g_gx.gl_textures[id] != tex ||
+            g_gx.tex_obj_w[id] != width ||
+            g_gx.tex_obj_h[id] != height ||
+            g_gx.tex_obj_fmt[id] != (int)format;
+        int params_changed = cached->wrap_s != wrap_s || cached->wrap_t != wrap_t ||
+            cached->min_filter != filter_mode;
 
         /* update wrap/filter if changed */
+        if (params_changed) {
+            pc_gx_draw_pending();
+            glBindTexture(GL_TEXTURE_2D, tex);
+            pc_profiler_add_count_texture_bind();
+            pc_gx_texture_bind_cache_invalidate();
+        }
         if (cached->wrap_s != wrap_s || cached->wrap_t != wrap_t) {
             GLenum gl_ws = (wrap_s == 2) ? GL_MIRRORED_REPEAT :
                            (wrap_s == 0) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
@@ -674,12 +692,13 @@ void GXLoadTexObj(void* obj, u32 id) {
         g_gx.tex_obj_w[id] = width;
         g_gx.tex_obj_h[id] = height;
         g_gx.tex_obj_fmt[id] = (int)format;
-        DIRTY(PC_GX_DIRTY_TEXTURES);
+        if (slot_changed || params_changed) DIRTY(PC_GX_DIRTY_TEXTURES);
         return;
     }
 
     /* cache miss */
     tex_cache_misses++;
+    pc_gx_draw_pending();
 
     /* try texture pack replacement before decoding */
     if (pc_texture_pack_active()) {
@@ -702,12 +721,19 @@ void GXLoadTexObj(void* obj, u32 id) {
                                                &hd_w, &hd_h);
         if (hd_tex) {
             glBindTexture(GL_TEXTURE_2D, hd_tex);
+            pc_profiler_add_count_texture_bind();
+            pc_gx_texture_bind_cache_invalidate();
             GLenum gl_ws = (wrap_s == 2) ? GL_MIRRORED_REPEAT :
                            (wrap_s == 0) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
             GLenum gl_wt = (wrap_t == 2) ? GL_MIRRORED_REPEAT :
                            (wrap_t == 0) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_ws);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_wt);
+            {
+                GLenum gl_filter = filter_mode ? GL_LINEAR : GL_NEAREST;
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gl_filter);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, gl_filter);
+            }
 
             TexCacheEntry* entry = tex_cache_insert(o[TEXOBJ_IMAGE_PTR], width, height, format,
                                                     tlut_key, tlut_ptr_key, tlut_hash_key, hash, hd_tex);
@@ -729,6 +755,8 @@ void GXLoadTexObj(void* obj, u32 id) {
     GLuint tex;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
+    pc_profiler_add_count_texture_bind();
+    pc_gx_texture_bind_cache_invalidate();
 
     if (image_ptr && width > 0 && height > 0 && width <= 1024 && height <= 1024) {
         u8* rgba = (u8*)malloc(width * height * 4);
@@ -791,6 +819,12 @@ void GXLoadTexObj(void* obj, u32 id) {
     g_gx.tex_obj_h[id] = height;
     g_gx.tex_obj_fmt[id] = (int)format;
     DIRTY(PC_GX_DIRTY_TEXTURES);
+}
+
+void GXLoadTexObj(void* obj, u32 id) {
+    Uint64 prof_start = pc_profiler_begin_timer();
+    pc_gx_load_tex_obj_impl(obj, id);
+    pc_profiler_add_time(PC_PROF_TIMER_TEXOBJ, prof_start);
 }
 
 u32 GXGetTexBufferSize(u16 width, u16 height, u32 format, GXBool mipmap, u8 max_lod) {

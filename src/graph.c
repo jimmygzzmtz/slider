@@ -29,7 +29,8 @@
 #include "pc_model_viewer.h"
 #include "pc_diag.h"
 #include "pc_platform.h"
-#include <setjmp.h>
+#include "pc_pause_menu.h"
+#include "pc_profiler.h"
 extern int g_pc_running;
 #endif
 
@@ -40,6 +41,7 @@ static int skip_frame; // TODO: this is actually declared in graph_main
 u8 SoftResetEnable;
 #endif
 static int frame; // TODO: this is actually declared in graph_task_set00
+static float graph_audio_accum;
 
 #ifdef TARGET_PC
 #define CONSTRUCT_THA_GA(tha_ga, name, name2) (THA_GA_ct((tha_ga), sys_dynamic.name, name2 ## _SIZE * sizeof(Gfx)))
@@ -111,6 +113,10 @@ extern void graph_ct(GRAPH* this) {
     bzero(this, sizeof(GRAPH));
     this->frame_counter = 0;
     this->cfb_bank = 0;
+    this->dt = FRAMES_TO_SECONDS(1.0f);
+    this->dt_num_60fps_frames = 1.0f;
+    this->dt_total_60fps_frames = 0.0;
+    graph_audio_accum = 0.0f;
     SETREG(SREG, 33, GETREG(SREG, 33) & ~2);
     SETREG(SREG, 33, GETREG(SREG, 33) & ~1);
     zurumode_init();
@@ -120,6 +126,44 @@ extern void graph_ct(GRAPH* this) {
 extern void graph_dt(GRAPH* this) {
     GRAPH_SET_DOING_POINT(this, DT);
     zurumode_cleanup();
+}
+
+int graph_dt_60hz_ticks(GAME* game, float* accum) {
+    int max_ticks = 4;
+
+#ifdef TARGET_PC
+    if (g_pc_speedhack_enabled) {
+        max_ticks = (int)PC_SPEEDHACK_MULTIPLIER;
+    }
+#endif
+
+    *accum += (float)game->graph->dt_num_60fps_frames;
+    int ticks = (int)*accum;
+    *accum -= (float)ticks;
+    if (ticks > max_ticks) ticks = max_ticks;
+    return ticks;
+}
+
+int graph_dt_period_elapsed(GAME* game, float* accum, float period_frames) {
+    *accum += (float)game->graph->dt_num_60fps_frames;
+    if (*accum >= period_frames) {
+        *accum -= period_frames;
+        if (*accum > period_frames * 4.0f) *accum = 0.0f;
+        return 1;
+    }
+    return 0;
+}
+
+double graph_dt_frame_time(GAME* game) {
+    return game->graph->dt_total_60fps_frames;
+}
+
+int graph_dt_frame_phase(GAME* game, int period_frames) {
+    if (period_frames <= 0) {
+        return 0;
+    }
+
+    return (int)graph_dt_frame_time(game) % period_frames;
 }
 
 static void graph_task_set00(GRAPH* this) {
@@ -138,12 +182,23 @@ static void graph_task_set00(GRAPH* this) {
             ucode[1].type = UCODE_TYPE_SPRITE_TEXT;
             ucode[0].ucode_p = ucode_GetPolyTextStart();
             ucode[1].ucode_p = ucode_GetSpriteTextStart();
+#ifdef TARGET_PC
+            Uint64 pc_prof_jw = pc_profiler_begin_timer();
+#endif
             JW_BeginFrame();
             emu64_init();
             emu64_set_ucode_info(2, ucode);
             emu64_set_first_ucode(ucode[0].ucode_p);
             PC_DIAG(3, "graph_task_set00: emu64_taskstart(Gfx_list05=%p)\n", (void*)this->Gfx_list05);
+#ifdef TARGET_PC
+            {
+                Uint64 pc_prof_t = pc_profiler_begin_timer();
+                emu64_taskstart(this->Gfx_list05); /* work data */
+                pc_profiler_add_time(PC_PROF_TIMER_EMU64, pc_prof_t);
+            }
+#else
             emu64_taskstart(this->Gfx_list05); /* work data */
+#endif
 #ifdef TARGET_PC
             {
                 extern int pc_emu64_frame_cmds, pc_emu64_frame_tri_cmds, pc_emu64_frame_vtx_cmds;
@@ -154,6 +209,10 @@ static void graph_task_set00(GRAPH* this) {
             }
 #endif
             emu64_cleanup();
+#ifdef TARGET_PC
+            /* Stop before JW_EndFrame: it contains the VI wait (swap/pace) */
+            pc_profiler_add_time(PC_PROF_TIMER_JW_FRAME, pc_prof_jw);
+#endif
             JW_EndFrame();
             frame++;
         }
@@ -248,6 +307,25 @@ static void reset_check(GRAPH* this, GAME* game) {
     }
 }
 
+static void graph_audio_frame() {
+    sAdo_GameFrame();
+}
+
+static void graph_audio_gameframe(GRAPH* this, GAME* game) {
+    int ticks = graph_dt_60hz_ticks(game, &graph_audio_accum);
+    int i;
+
+    if (ticks <= 0) {
+        return;
+    }
+
+    GRAPH_SET_DOING_POINT(this, AUDIO);
+    for (i = 0; i < ticks; i++) {
+        graph_audio_frame();
+    }
+    GRAPH_SET_DOING_POINT(this, AUDIO_FINISHED);
+}
+
 // Aus version removes debug frame skip logic
 #if VERSION >= VER_GAFU01_00
 static void graph_main(GRAPH* this, GAME* game) {
@@ -276,9 +354,7 @@ static void graph_main(GRAPH* this, GAME* game) {
     }
 
     if (GETREG(SREG, 20) < 2) {
-        GRAPH_SET_DOING_POINT(this, AUDIO);
-        sAdo_GameFrame();
-        GRAPH_SET_DOING_POINT(this, AUDIO_FINISHED);
+        graph_audio_gameframe(this, game);
     }
 
     reset_check(this, game);
@@ -297,16 +373,39 @@ static void graph_main(GRAPH* this, GAME* game) {
     game->disable_display = FALSE;
     GRAPH_SET_DOING_POINT(this, GAME_MAIN);
     PC_DIAG(10, "graph_main: calling game_main (exec=%p)\n", (void*)game->exec);
+#ifdef TARGET_PC
+    {
+        Uint64 pc_prof_t;
+        pc_profiler_begin_frame();
+        pc_prof_t = pc_profiler_begin_timer();
+        game_main(game);
+        pc_profiler_add_time(PC_PROF_TIMER_GAME_LOGIC, pc_prof_t);
+    }
+#else
     game_main(game);
+#endif
     PC_DIAG(10, "graph_main: game_main returned, frame_counter=%d\n", this->frame_counter);
+#ifdef TARGET_PC
+    pc_pause_menu_draw(game);
+#endif
     GRAPH_SET_DOING_POINT(this, GAME_MAIN_FINISHED);
     if (ResetStatus < IRQ_RESET_DELAY) {
         if (skip_frame < GETREG(SREG, 3)) {
             skip_frame++;
             this->frame_counter++;
         } else if (game->disable_display == FALSE) {
+            int pc_draw_err;
             skip_frame = 0;
-            if (graph_draw_finish(this) == FALSE) {
+#ifdef TARGET_PC
+            {
+                Uint64 pc_prof_t = pc_profiler_begin_timer();
+                pc_draw_err = graph_draw_finish(this);
+                pc_profiler_add_time(PC_PROF_TIMER_DRAW_FINISH, pc_prof_t);
+            }
+#else
+            pc_draw_err = graph_draw_finish(this);
+#endif
+            if (pc_draw_err == FALSE) {
                 GRAPH_SET_DOING_POINT(this, TASK_SET);
                 graph_task_set00(this);
                 GRAPH_SET_DOING_POINT(this, TASK_SET_FINISHED);
@@ -322,23 +421,13 @@ static void graph_main(GRAPH* this, GAME* game) {
 
     PC_DIAG(10, "graph2: before audio+reset, frame_counter=%d\n", this->frame_counter);
     if (GETREG(SREG, 20) < 2) {
-        GRAPH_SET_DOING_POINT(this, AUDIO);
 #ifdef TARGET_PC
-        {
-            static jmp_buf audio_jmpbuf;
-            pc_crash_set_jmpbuf(&audio_jmpbuf);
-            if (setjmp(audio_jmpbuf) != 0) {
-                printf("[PC] CRASH in sAdo_GameFrame! addr=0x%08X data=0x%08X\n",
-                       pc_crash_get_addr(), pc_crash_get_data_addr());
-            } else {
-                sAdo_GameFrame();
-            }
-            pc_crash_set_jmpbuf(NULL);
-        }
+        Uint64 pc_prof_t = pc_profiler_begin_timer();
+        graph_audio_gameframe(this, game);
+        pc_profiler_add_time(PC_PROF_TIMER_AUDIO_FRAME, pc_prof_t);
 #else
-        sAdo_GameFrame();
+        graph_audio_gameframe(this, game);
 #endif
-        GRAPH_SET_DOING_POINT(this, AUDIO_FINISHED);
     }
 
     reset_check(this, game);
@@ -363,6 +452,10 @@ extern void graph_proc(void* arg) {
     while (dlftbl != NULL) {
         size_t size = dlftbl->alloc_size;
         GAME* game = (GAME*)malloc(size);
+        OSTime time = OSGetTime();
+        const OSTick u_multiplier = OSSecondsToTicks(1);
+        const double d_multiplier = 1.0 / (double)u_multiplier;
+
         game_class_p = game;
         bzero(game, size);
         GRAPH_SET_DOING_POINT(__graph, GAME_CT);
@@ -375,7 +468,29 @@ extern void graph_proc(void* arg) {
                && g_pc_running
 #endif
         ) {
-            PC_DIAG(10, "graph_proc: loop top, game=%p\n", (void*)game);
+            const OSTime current_time = OSGetTime();
+            double delta_time = ((u32)(current_time - time)) * d_multiplier;
+            double dt_num_60fps_frames = SECONDS_TO_FRAMES(delta_time);
+            GRAPH* graph = __graph;
+
+            if (dt_num_60fps_frames > 4.0) {
+                dt_num_60fps_frames = 4.0;
+                delta_time = dt_num_60fps_frames / 60.0;
+            }
+
+#ifdef TARGET_PC
+            if (g_pc_speedhack_enabled) {
+                dt_num_60fps_frames *= PC_SPEEDHACK_MULTIPLIER;
+                delta_time *= PC_SPEEDHACK_MULTIPLIER;
+            }
+#endif
+
+            graph->dt = delta_time;
+            graph->dt_num_60fps_frames = dt_num_60fps_frames;
+            graph->dt_total_60fps_frames += dt_num_60fps_frames;
+            time = current_time;
+
+            PC_DIAG(10, "graph_proc: loop top, game=%p, dt=%f\n", (void*)game, delta_time);
             if (!dvderr_draw()) {
                 graph_main(__graph, game);
             }

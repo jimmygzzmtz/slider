@@ -39,11 +39,14 @@
 
 /* From pc_gx.c — restore game's GL state after NES emulation */
 extern void pc_gx_restore_after_nes(void);
+extern void pc_gx_draw_pending(void);
 
 /* Externed directly (not via headers) to avoid fixNES symbol clashes. */
 extern int g_pc_window_w;
 extern int g_pc_window_h;
 extern int pc_settings_get_nes_aspect(void);
+extern int g_pc_profile_enabled;
+extern void pc_profiler_add_count_texture_bind_slow(void);
 
 /* ======================================================================
  * Global variables required by fixNES modules (normally in main.c)
@@ -156,6 +159,7 @@ static void fixnes_init_gl(void) {
 
     glGenTextures(1, &fixnes_texture);
     glBindTexture(GL_TEXTURE_2D, fixnes_texture);
+    if (g_pc_profile_enabled) pc_profiler_add_count_texture_bind_slow();
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -326,6 +330,12 @@ void pc_fixnes_sync_wram(uint8_t *dst_wram) {
         memcpy(dst_wram, src, 0x800);
 }
 
+void pc_fixnes_reset(void) {
+    // Console soft reset (L+R+Start)
+    if (fixnes_initialized)
+        ppuSoftReset();
+}
+
 void pc_fixnes_set_input(uint8_t buttons) {
     /* buttons: bit0=A, bit1=B, bit2=Select, bit3=Start,
      *          bit4=Up, bit5=Down, bit6=Left, bit7=Right
@@ -376,12 +386,14 @@ void pc_fixnes_cleanup(void) {
 }
 
 void pc_fixnes_render_frame(uint16_t *fb) {
+    pc_gx_draw_pending(); /* NES uses its own GL pipeline */
     if (!fixnes_shader) fixnes_init_gl();
 
     /* Upload framebuffer — fixNES outputs RGB565 with COL_TEX_BSWAP
      * (R in low bits) — upload with GL_UNSIGNED_SHORT_5_6_5_REV.
      * Skip top 8 rows (often garbage), show 224 lines. */
     glBindTexture(GL_TEXTURE_2D, fixnes_texture);
+    if (g_pc_profile_enabled) pc_profiler_add_count_texture_bind_slow();
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 256, 224, 0,
                  GL_RGB, GL_UNSIGNED_SHORT_5_6_5_REV, fb + 256 * 8);
 
@@ -415,6 +427,7 @@ void pc_fixnes_render_frame(uint16_t *fb) {
     glUseProgram(fixnes_shader);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, fixnes_texture);
+    if (g_pc_profile_enabled) pc_profiler_add_count_texture_bind_slow();
     glUniform1i(fixnes_tex_uniform, 0);
     glBindVertexArray(fixnes_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);

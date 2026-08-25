@@ -105,6 +105,10 @@ static void aUKI_actor_ct(ACTOR* actorx, GAME* game) {
     uki->proc = aUKI_PROC_CARRY;
     uki->coast_flag = FALSE;
     uki->_2B5 = 0;
+    uki->hamon_accum = 0.0f;
+    uki->touch_vib_accum = 0.0f;
+    uki->logic_accum = 0.0f;
+    uki->logic_ticks = 0;
 }
 
 static void aUKI_actor_dt(ACTOR* actorx, GAME* game) {

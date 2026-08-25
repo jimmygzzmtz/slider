@@ -36,6 +36,21 @@ static f32 aGYO_shadow_scale[aGYO_SIZE_NUM] = { 0.3f, 0.4f, 0.5f, 0.5f, 0.6f, 0.
 
 static int aGYR_empty_area(ACTOR* actorx);
 
+static s16 aGYR_dt_s16_step(GAME* game, s16 step) {
+    f32 dt_step;
+
+    if (step == 0) {
+        return 0;
+    }
+
+    dt_step = (f32)step * (f32)game->graph->dt_num_60fps_frames;
+    if (dt_step < 1.0f) {
+        dt_step = 1.0f;
+    }
+
+    return (s16)dt_step;
+}
+
 static void aGYR_actor_ct(ACTOR* actorx, GAME* game) {
     GYO_RELEASE_ACTOR* gyo_release = (GYO_RELEASE_ACTOR*)actorx;
     GAME_PLAY* play = (GAME_PLAY*)game;
@@ -87,7 +102,7 @@ static void aGYR_actor_ct(ACTOR* actorx, GAME* game) {
     gyo_release->angle_xz = 0;
     gyo_release->angle_y = 0;
     gyo_release->angle_y_add = 180;
-    gyo_release->exist_timer = 0;
+    gyo_release->exist_timer = 0.0f;
     gyo_release->shadow_scale = 1.0f;
     gyo_release->exist_flag = TRUE;
     gyo_release->_1B5 = FALSE;
@@ -101,7 +116,7 @@ static void aGYR_actor_dt(ACTOR* actorx, GAME* game) {
     ClObjPipe_dt(game, &gyo_release->col_pipe);
 }
 
-static int aGYR_anime_frame(GYO_RELEASE_ACTOR* gyo_release) {
+static int aGYR_anime_frame(GYO_RELEASE_ACTOR* gyo_release, int advance) {
     static int aGYR_frame_ptn1[] = { 1, 1, 0, 0, 2, 2, 0, 0 };
     static int aGYR_frame_ptn2[] = { 1, 1, 1, 1, 0, 0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 0 };
     static int aGYR_anime_ptn[] = {
@@ -112,7 +127,9 @@ static int aGYR_anime_frame(GYO_RELEASE_ACTOR* gyo_release) {
     int cur_frame = gyo_release->anime_frame;
     int next_frame;
 
-    cur_frame++;
+    if (advance) {
+        cur_frame++;
+    }
     if (aGYR_anime_ptn[gyo_release->gyo_type] == 1) {
         if (cur_frame >= ARRAY_COUNT(aGYR_frame_ptn1)) {
             cur_frame = 0;
@@ -207,39 +224,41 @@ static void aGYR_Shadow_size(ACTOR* actorx) {
         aGYO_shadow_scale[gyo_release->size_type] * ofs_y * gyo_release->shadow_scale - correction_z;
 }
 
-static void aGYR_position_move(ACTOR* actorx) {
+static void aGYR_position_move(ACTOR* actorx, GAME* game) {
     GYO_RELEASE_ACTOR* gyo_release = (GYO_RELEASE_ACTOR*)actorx;
+    f32 dt = (f32)game->graph->dt_num_60fps_frames;
     u32 atr;
 
     xyz_t_move(&actorx->last_world_position, &actorx->world.position);
-    actorx->position_speed.y += -0.25f;
+    actorx->position_speed.y += -0.25f * dt;
     Actor_position_move(actorx);
 
     atr = mCoBG_Wpos2BgAttribute_Original(actorx->world.position);
-    gyo_release->revert_position_timer--;
-    if (gyo_release->revert_position_timer <= 0) {
-        gyo_release->revert_position_timer = 0;
+    gyo_release->revert_position_timer -= dt;
+    if (gyo_release->revert_position_timer <= 0.0f) {
+        gyo_release->revert_position_timer = 0.0f;
     }
 
     if (mCoBG_CheckWaterAttribute(atr)) {
         if (!gyo_release->revert_position_flag) {
             gyo_release->revert_position_flag = TRUE;
-            gyo_release->revert_position_timer = 3;
+            gyo_release->revert_position_timer = 3.0f;
         }
     } else {
-        if (gyo_release->revert_position_flag == TRUE && gyo_release->revert_position_timer <= 0) {
+        if (gyo_release->revert_position_flag == TRUE && gyo_release->revert_position_timer <= 0.0f) {
             actorx->world.position.x = actorx->last_world_position.x;
             actorx->world.position.z = actorx->last_world_position.z;
         }
     }
 }
 
-static int aGYR_check_timer(ACTOR* actorx) {
+static int aGYR_check_timer(ACTOR* actorx, GAME* game) {
     GYO_RELEASE_ACTOR* gyo_release = (GYO_RELEASE_ACTOR*)actorx;
+    f32 dt = (f32)game->graph->dt_num_60fps_frames;
     int res = TRUE;
 
-    gyo_release->exist_timer++;
-    if (gyo_release->exist_timer > 140) {
+    gyo_release->exist_timer += dt;
+    if (gyo_release->exist_timer > 140.0f) {
         f32 scale_rate;
 
         if (actorx->scale.x > 0.006f) {
@@ -248,10 +267,11 @@ static int aGYR_check_timer(ACTOR* actorx) {
             scale_rate = 0.98f;
         }
 
+        scale_rate = powf(scale_rate, dt);
         actorx->scale.x *= scale_rate;
         actorx->scale.y = actorx->scale.z = actorx->scale.x;
         gyo_release->shadow_scale *= scale_rate;
-        if (gyo_release->exist_timer > 160) {
+        if (gyo_release->exist_timer > 160.0f) {
             Actor_delete(actorx);
             res = FALSE;
         }
@@ -276,8 +296,8 @@ static void aGYR_in_water_move(ACTOR* actorx, GAME* game) {
 static void aGYR_move_sub(ACTOR* actorx, GAME* game) {
     GYO_RELEASE_ACTOR* gyo_release = (GYO_RELEASE_ACTOR*)actorx;
 
-    chase_s(&gyo_release->angle_xz, DEG2SHORT_ANGLE2(90.0f), 0x800);
-    if (aGYR_check_timer(actorx) == TRUE) {
+    chase_s(&gyo_release->angle_xz, DEG2SHORT_ANGLE2(90.0f), aGYR_dt_s16_step(game, 0x800));
+    if (aGYR_check_timer(actorx, game) == TRUE) {
         if (mCoBG_CheckWaterAttribute(mCoBG_Wpos2BgAttribute_Original(actorx->world.position))) {
             f32 water_y = mCoBG_GetWaterHeight_File(actorx->world.position, __FILE__, 635);
 
@@ -287,7 +307,7 @@ static void aGYR_move_sub(ACTOR* actorx, GAME* game) {
             }
         }
 
-        chase_s(&gyo_release->angle_y_add, 180, 32);
+        chase_s(&gyo_release->angle_y_add, 180, aGYR_dt_s16_step(game, 32));
         if (gyo_release->gyo_type == aGYO_TYPE_LOACH || gyo_release->gyo_type == aGYO_TYPE_EEL) {
             gyo_release->angle_y = 0;
         } else {
@@ -311,7 +331,7 @@ static void aGYR_actor_move(ACTOR* actorx, GAME* game) {
 
     actorx->state_bitfield &= ~ACTOR_STATE_24;
     if ((actorx->state_bitfield & ACTOR_STATE_NO_MOVE_WHILE_CULLED) != 0) {
-        aGYR_position_move(actorx);
+        aGYR_position_move(actorx, game);
         aGYR_move_sub(actorx, game);
         aGYR_cull_check(actorx, game);
     }
@@ -336,7 +356,17 @@ static void aGYR_actor_draw(ACTOR* actorx, GAME* game) {
     if (actorx->bg_collision_check.result.on_ground) {
         frame = 0;
     } else {
-        frame = aGYR_anime_frame(gyo_release);
+#ifdef TARGET_PC
+        int ticks = graph_dt_60hz_ticks(game, &gyo_release->anime_accum);
+        int tick;
+
+        frame = aGYR_anime_frame(gyo_release, ticks > 0);
+        for (tick = 1; tick < ticks; tick++) {
+            frame = aGYR_anime_frame(gyo_release, TRUE);
+        }
+#else
+        frame = aGYR_anime_frame(gyo_release, TRUE);
+#endif
     }
     gSPDisplayList(NEXT_POLY_OPA_DISP, ((Gfx**)aGYO_displayList[gyo_release->gyo_type])[(int)(frame * 0.5f)]);
 

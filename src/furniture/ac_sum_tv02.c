@@ -7,6 +7,11 @@ static void fST02_ct(FTR_ACTOR* ftr_actor, u8* data) {
 }
 
 static void fST02_mv(FTR_ACTOR* ftr_actor, ACTOR* my_room_actor, GAME* game, u8* data) {
+    ftr_actor->dynamic_work_f[0] += (f32)game->graph->dt_num_60fps_frames;
+    while (ftr_actor->dynamic_work_f[0] >= 10.0f) {
+        ftr_actor->dynamic_work_f[0] -= 10.0f;
+    }
+
     if (ftr_actor->switch_bit) {
         if (aFTR_CAN_PLAY_SE(ftr_actor)) {
             sAdo_OngenPos((u32)ftr_actor, 4, &ftr_actor->position);
@@ -35,8 +40,7 @@ static u8* fST02_on_anime[] = {
 };
 
 static void fST02_dw(FTR_ACTOR* ftr_actor, ACTOR* my_room_actor, GAME* game, u8* data) {
-    GAME_PLAY* play = (GAME_PLAY*)game;
-    u32 ctr_ofs;
+    int ctr_ofs = (int)ftr_actor->dynamic_work_f[0];
     u8* tex;
 
     OPEN_DISP(game->graph);
@@ -44,12 +48,6 @@ static void fST02_dw(FTR_ACTOR* ftr_actor, ACTOR* my_room_actor, GAME* game, u8*
     gSPMatrix(NEXT_POLY_OPA_DISP, _Matrix_to_Mtx_new(game->graph), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
 
     if (ftr_actor->switch_bit) {
-        if (ftr_actor->ctr_type == aFTR_CTR_TYPE_GAME_PLAY) {
-            ctr_ofs = play->game_frame;
-        } else {
-            ctr_ofs = game->frame_counter;
-        }
-
         tex = fST02_on_anime[(ctr_ofs >> 1) % ARRAY_COUNT(fST02_on_anime)];
         gSPSegment(NEXT_POLY_OPA_DISP, G_MWO_SEGMENT_8, tex);
     } else {
@@ -97,14 +95,23 @@ static void fST02_ct(FTR_ACTOR* ftr_actor, u8* data) {
 }
 
 static void fST02_mv(FTR_ACTOR* ftr_actor, ACTOR* my_room_actor, GAME* game, u8* data) {
+    int tex_anim_ticks;
+
     if (ftr_actor->switch_bit) {
         if (aFTR_CAN_PLAY_SE(ftr_actor)) {
             sAdo_OngenPos((u32)ftr_actor, 4, &ftr_actor->position);
         }
 
-        ftr_actor->tex_animation.frame++;
-        if (ftr_actor->tex_animation.frame >= 10 || ftr_actor->tex_animation.frame < 0) {
-            ftr_actor->tex_animation.frame = 0;
+#ifdef TARGET_PC
+        tex_anim_ticks = graph_dt_60hz_ticks(game, &ftr_actor->dynamic_work_f[0]);
+#else
+        tex_anim_ticks = 1;
+#endif
+        while (tex_anim_ticks-- > 0) {
+            ftr_actor->tex_animation.frame++;
+            if (ftr_actor->tex_animation.frame >= 10 || ftr_actor->tex_animation.frame < 0) {
+                ftr_actor->tex_animation.frame = 0;
+            }
         }
     }
 

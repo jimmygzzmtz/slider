@@ -4,10 +4,10 @@ project(ac_pc C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
-# Do NOT set a default build type. Any optimization level (-O1, -O2) exposes
-# undefined behavior in decomp code causing crashes. An empty build type gives
-# GCC's default (-O0) which works correctly. The NDEBUG define below ensures
-# asserts stay disabled regardless of build type.
+# Do NOT set a default build type. Optimization is controlled by the common
+# flags below: -O2 with -fno-strict-aliasing and -fwrapv, which neutralize the
+# decomp UB classes (type punning, signed overflow) that broke plain -O2.
+# The NDEBUG define below ensures asserts stay disabled regardless of build type.
 
 # Options
 option(PC_CONSOLE "Show console window (disables -mwindows, useful for debugging)" OFF)
@@ -42,15 +42,14 @@ add_compile_definitions(
     KEYBOARD_TYPING   # Physical keyboard typing in text editor. Remove for platforms without keyboards.
 )
 
-# Common compiler flags (applied to all sources)
-if(MSVC)
-    add_compile_options(/W0)
-else()
-    add_compile_options(
-        -fno-strict-aliasing
-        -fwrapv
-    )
-endif()
+# Common compiler flags (applied to all sources). GCC is required:
+# the decomp depends on -fno-strict-aliasing/-fwrapv semantics and the
+# PC layer uses GCC builtins.
+add_compile_options(
+    -O2
+    -fno-strict-aliasing
+    -fwrapv
+)
 
 # =============================================================================
 # Include paths
@@ -271,6 +270,7 @@ set(PC_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_gx.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_gx_tev.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_gx_texture.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_gbi_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_os.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_dvd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_pad.c
@@ -287,6 +287,11 @@ set(PC_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_model_viewer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_texture_pack.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_settings.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_profiler.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_pause_menu.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_settings_menu.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_menu_util.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_text_draw.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_keybindings.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_nes_fixnes.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pc_stubs.c

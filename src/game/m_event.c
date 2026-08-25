@@ -208,6 +208,10 @@ extern void mEv_UnSetFirstJob() {
     }
 }
 
+#ifdef TARGET_PC
+static int l_wade_disabled_bak = FALSE;
+#endif
+
 extern void mEv_SetFirstIntro() {
     u32 player_no = Common_Get(player_no);
 
@@ -215,6 +219,11 @@ extern void mEv_SetFirstIntro() {
         u32 ev = mEv_SAVED_FIRSTINTRO_PLR0;
         ev += player_no;
 
+#ifdef TARGET_PC
+        /* The scripted introduction expects normal acre transitions. */
+        l_wade_disabled_bak = g_mPlib_wade_disabled;
+        g_mPlib_wade_disabled = FALSE;
+#endif
         mEv_EventON(ev);
     }
 }
@@ -241,6 +250,11 @@ extern void mEv_UnSetFirstIntro() {
     if (player_no < PLAYER_NUM) {
         u32 ev = mEv_SAVED_FIRSTINTRO_PLR0;
         ev += player_no;
+#ifdef TARGET_PC
+        if (mEv_CheckFirstIntro()) {
+            g_mPlib_wade_disabled = l_wade_disabled_bak;
+        }
+#endif
         mEv_EventOFF(ev);
     }
 }
@@ -2558,7 +2572,7 @@ extern int mEv_spread_rumor(int type) {
 
 extern int mEv_get_rumor() {
     if (n_rumor != 0) {
-        return rumor_table[gamePT->frame_counter % n_rumor] | mEv_SET(mEv_TYPE_RUMOR, 0);
+        return rumor_table[graph_dt_frame_phase(gamePT, n_rumor)] | mEv_SET(mEv_TYPE_RUMOR, 0);
     }
 
     return 0;
