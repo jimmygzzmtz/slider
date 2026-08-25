@@ -43,7 +43,7 @@
 </head>
 <body>
     <div id="container">
-        <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+        <canvas id="canvas" width="1280" height="720" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
         <!-- Post-process overlay used by shell-postfx.js (ASCII filter +
              CRT shader). Hidden by default; positioned absolutely on top
              of #canvas via shell.css. -->
@@ -347,15 +347,20 @@
         var FIXED_CANVAS_H = _isMobile ? 540 : 1440; /* 4:3 */
         function initCanvasSize() {
             var c = document.getElementById('canvas');
+            if (!c) return;
             if (c.width !== FIXED_CANVAS_W || c.height !== FIXED_CANVAS_H) {
                 c.width  = FIXED_CANVAS_W;
                 c.height = FIXED_CANVAS_H;
             }
+            c.style.width = '100%';
+            c.style.height = '100%';
         }
         initCanvasSize();
         // Visualviewport listener kept as a no-op-on-canvas reflow trigger:
         // CSS handles the display side via 100vw/100dvh + object-fit.
-        function resizeCanvasToViewport() { /* no longer touches canvas dims */ }
+        function resizeCanvasToViewport() {
+            initCanvasSize();
+        }
         window.addEventListener('resize', resizeCanvasToViewport);
 
         // Mobile Chrome reports an unstable inner{Width,Height} during the

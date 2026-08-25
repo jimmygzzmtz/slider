@@ -340,6 +340,16 @@ void pc_platform_shutdown(void) {
 
 void pc_platform_update_window_size(void) {
     SDL_GL_GetDrawableSize(g_pc_window, &g_pc_window_w, &g_pc_window_h);
+#ifdef __EMSCRIPTEN__
+    if (g_pc_window_w <= 0 || g_pc_window_h <= 0) {
+        int canvas_w = 0, canvas_h = 0;
+        emscripten_get_canvas_element_size("#canvas", &canvas_w, &canvas_h);
+        if (canvas_w > 0 && canvas_h > 0) {
+            g_pc_window_w = canvas_w;
+            g_pc_window_h = canvas_h;
+        }
+    }
+#endif
     if (g_pc_window_w <= 0) g_pc_window_w = PC_SCREEN_WIDTH;
     if (g_pc_window_h <= 0) g_pc_window_h = PC_SCREEN_HEIGHT;
 }
