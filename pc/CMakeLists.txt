@@ -499,8 +499,8 @@ elseif(EMSCRIPTEN)
         -Wl,--wrap=printf
         -Wl,--wrap=puts
         -Wl,--wrap=iprintf
-        # Use Android's GLES 300-flavored shaders — WebGL2 is GLES 3.0, not desktop GL.
-        "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/android/app/src/main/assets/shaders@/shaders"
+        # Preload canonical shaders directory
+        "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/shaders@/shaders"
         "SHELL:--shell-file ${CMAKE_BINARY_DIR}/web/shell.html"
     )
     # Re-link when shell.html changes — emcc bakes it into index.html via

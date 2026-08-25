@@ -30,8 +30,8 @@ char* pc_load_text_file(const char* path) {
 }
 
 static const char* shader_version_line(void) {
-#ifdef __EMSCRIPTEN__
-    return "#version 300 es\n";
+#if defined(__EMSCRIPTEN__) || defined(TARGET_ANDROID)
+    return "#version 300 es\nprecision highp float;\nprecision highp int;\n";
 #else
     return "#version 330 core\n";
 #endif
@@ -42,18 +42,30 @@ static char* load_shader(const char* filename) {
     snprintf(path, sizeof(path), "shaders/%s", filename);
     char* src = pc_load_text_file(path);
     if (src) {
-#ifdef __EMSCRIPTEN__
-        /* Emscripten exposes WebGL2 as GLSL ES 3.00; desktop shaders still
-         * use 330 core, so normalize the version directive at load time. */
-        if (strncmp(src, "#version 330 core", 17) == 0) {
-            char* version_start = strstr(src, "#version");
-            char* newline = strchr(version_start ? version_start : src, '\n');
-            size_t prefix = version_start ? (size_t)(newline ? (newline - src) + 1 : strlen(src)) : 0;
+#if defined(__EMSCRIPTEN__) || defined(TARGET_ANDROID)
+        /* Emscripten / Android expose WebGL2 / GLES 3.0 as GLSL ES 3.00.
+         * Normalize the incoming version line and precision qualifiers. */
+        if (strncmp(src, "#version", 8) == 0) {
+            char* newline = strchr(src, '\n');
+            size_t prefix = newline ? (size_t)(newline - src) + 1 : strlen(src);
+            while (src[prefix] == ' ' || src[prefix] == '\t' || src[prefix] == '\r' || src[prefix] == '\n') {
+                prefix++;
+            }
+            while (strncmp(src + prefix, "precision", 9) == 0) {
+                char* pnl = strchr(src + prefix, '\n');
+                prefix = pnl ? (size_t)(pnl - src) + 1 : strlen(src);
+                while (src[prefix] == ' ' || src[prefix] == '\t' || src[prefix] == '\r' || src[prefix] == '\n') {
+                    prefix++;
+                }
+            }
             size_t rest_len = strlen(src + prefix);
-            char* rewritten = (char*)malloc(strlen(shader_version_line()) + rest_len + 1);
+            const char* vline = shader_version_line();
+            size_t vline_len = strlen(vline);
+            char* rewritten = (char*)malloc(vline_len + rest_len + 1);
             if (rewritten) {
-                strcpy(rewritten, shader_version_line());
-                strcpy(rewritten + strlen(shader_version_line()), src + prefix);
+                memcpy(rewritten, vline, vline_len);
+                memcpy(rewritten + vline_len, src + prefix, rest_len);
+                rewritten[vline_len + rest_len] = '\0';
                 free(src);
                 src = rewritten;
             }
@@ -80,9 +92,9 @@ static GLuint compile_shader(GLenum type, const char* source) {
     GLint success;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
     if (!success) {
-        char log[512];
+        char log[1024];
         glGetShaderInfoLog(shader, sizeof(log), NULL, log);
-        fprintf(stderr, "WARNING: Shader compile error: %s\n", log);
+        fprintf(stderr, "WARNING: Shader compile error: %s\nSource:\n%s\n", log, source);
         glDeleteShader(shader);
         return 0;
     }
@@ -397,7 +409,10 @@ static char* build_specialized_source(const PCGXShaderKey* k) {
     while (*p) {
         const char* nl = strchr(p, '\n');
         const char* line_end = nl ? nl : p + strlen(p);
-        int skip = (strncmp(p, "#version", 8) == 0) ||
+        const char* q = p;
+        while (q < line_end && (*q == ' ' || *q == '\t')) q++;
+        int skip = (strncmp(q, "#version", 8) == 0) ||
+                   (strncmp(q, "precision", 9) == 0) ||
                    line_declares_folded_uniform(p, line_end);
         if (!skip) {
             size_t len = (size_t)(line_end - p);
