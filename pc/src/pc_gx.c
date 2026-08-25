@@ -21,6 +21,24 @@ typedef struct { u8 r, g, b, a; } GXColor;
  * the bytes — same hazard as the GXSetTevColor/Kcolor green-tint fix. */
 typedef struct { s16 r, g, b, a; } GXColorS10;
 
+#if defined(__EMSCRIPTEN__) || defined(TARGET_ANDROID)
+#define glUniform1i(...)        (pc_profiler_add_count_uniform(), glUniform1i(__VA_ARGS__))
+#define glUniform2i(...)        (pc_profiler_add_count_uniform(), glUniform2i(__VA_ARGS__))
+#define glUniform3i(...)        (pc_profiler_add_count_uniform(), glUniform3i(__VA_ARGS__))
+#define glUniform4i(...)        (pc_profiler_add_count_uniform(), glUniform4i(__VA_ARGS__))
+#define glUniform1f(...)        (pc_profiler_add_count_uniform(), glUniform1f(__VA_ARGS__))
+#define glUniform2f(...)        (pc_profiler_add_count_uniform(), glUniform2f(__VA_ARGS__))
+#define glUniform3f(...)        (pc_profiler_add_count_uniform(), glUniform3f(__VA_ARGS__))
+#define glUniform4f(...)        (pc_profiler_add_count_uniform(), glUniform4f(__VA_ARGS__))
+#define glUniform1iv(...)       (pc_profiler_add_count_uniform(), glUniform1iv(__VA_ARGS__))
+#define glUniform2iv(...)       (pc_profiler_add_count_uniform(), glUniform2iv(__VA_ARGS__))
+#define glUniform3iv(...)       (pc_profiler_add_count_uniform(), glUniform3iv(__VA_ARGS__))
+#define glUniform4iv(...)       (pc_profiler_add_count_uniform(), glUniform4iv(__VA_ARGS__))
+#define glUniform4fv(...)       (pc_profiler_add_count_uniform(), glUniform4fv(__VA_ARGS__))
+#define glUniform3fv(...)       (pc_profiler_add_count_uniform(), glUniform3fv(__VA_ARGS__))
+#define glUniformMatrix3fv(...) (pc_profiler_add_count_uniform(), glUniformMatrix3fv(__VA_ARGS__))
+#define glUniformMatrix4fv(...) (pc_profiler_add_count_uniform(), glUniformMatrix4fv(__VA_ARGS__))
+#else
 #undef glUniform1i
 #undef glUniform2i
 #undef glUniform3i
@@ -54,6 +72,7 @@ typedef struct { s16 r, g, b, a; } GXColorS10;
 #define glUniform3fv(...)       (pc_profiler_add_count_uniform(), glad_glUniform3fv(__VA_ARGS__))
 #define glUniformMatrix3fv(...) (pc_profiler_add_count_uniform(), glad_glUniformMatrix3fv(__VA_ARGS__))
 #define glUniformMatrix4fv(...) (pc_profiler_add_count_uniform(), glad_glUniformMatrix4fv(__VA_ARGS__))
+#endif
 
 /* --- Global GX State --- */
 PCGXState g_gx;

@@ -44,14 +44,14 @@ The container serves the generated output from the static web bundle at the root
 To build the browser bundle locally:
 
 ```bash
-emcmake cmake -S pc -B build-web -DCMAKE_BUILD_TYPE=Release
-cmake --build build-web --parallel
+emcmake cmake -S pc -B pc/build-web -DCMAKE_BUILD_TYPE=Release
+emmake make -C pc/build-web -j$(nproc)
 ```
 
 The generated site is emitted under:
 
 ```text
-build-web/web/
+pc/build-web/web/
 ```
 
 Those files are the exact static assets you would publish to GitHub Pages or copy into any web root for hosting.
