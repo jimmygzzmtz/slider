@@ -178,6 +178,13 @@ static void pc_unpack_rgba8f(u32 packed, float* out_rgba) {
     out_rgba[3] = (packed & 0xFF) / 255.0f;
 }
 
+static void pc_unpack_gxcolor_f(u32 packed, float* out_rgba) {
+    /* GX-light colors are stored in the same packed RGBA layout used by the
+     * SDK: (R<<24 | G<<16 | B<<8 | A). Convert to normalized float RGBA for
+     * the GL lighting path. */
+    pc_unpack_rgba8f(packed, out_rgba);
+}
+
 /* Map tex matrix ID to slot: raw 0..9, GX enum 30..57 (stride 3), or 60=identity */
 static int pc_tex_mtx_id_to_slot(int id) {
     if (id == GX_IDENTITY) return -1;
