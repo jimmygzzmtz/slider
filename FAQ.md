@@ -1,39 +1,57 @@
 # Frequently Asked Questions
 
-## Is the PC Port compatible with the Animal Crossing Deluxe mod by Cuyler?
+## What is the web port?
 
-No. Deluxe makes massive changes to the code, making them incompatible. Some QoL
-features may be ported over (such as borderless acre transitions and true unlocked
-framerate) with Cuyler's permission or by Cuyler himself, but a one-to-one port is
-not planned.
+The web port is a browser-based build of the Animal Crossing decompilation. It compiles the game to WebAssembly with Emscripten and renders it through WebGL2, allowing the game to run inside a standard browser without a native desktop executable.
 
-If you don't know what deluxe mod is, and you're looking for a different Animal Crossing experience, I highly recommend
-checking out the [Deluxe mod](https://discord.gg/HcpymVA).
+## Do I need a backend server?
 
-## Will there be mod support?
+No. The browser build is a static site. It runs as a WebAssembly app plus JS/CSS assets and stores save data in browser storage, typically IndexedDB. The app does not require a custom backend service to function.
 
-While anyone can make mods by modifying the decompilation source code directly,
-I'll look into making a proper mod loader after the 1.0 release. No promises!
+## How do I load the game ROM in the browser?
 
-## Will there be online play?
+The web shell exposes a ROM picker in the app. You select your legal copy of the Animal Crossing disc image and the browser-side runtime mounts it in the appropriate format for the game to load.
 
-Not planned. Putting aside the amount of work needed to include multiplayer, the
-original game was never designed with network security in mind. Adding online play
-onto that would be a likely security nightmare.
+## Does the web build support saves?
 
-## Does it work on Linux / Steam Deck?
+Yes. Save data is persisted in the browser using IndexedDB, which is the same general model used by the project’s browser save mounting layer. This keeps the app portable while still preserving save state across refreshes and browser sessions.
 
-The Windows binary runs under Proton/Wine and seems to work fine from what I've
-heard. Native Linux is not officially supported yet, hopefully will happen in the
-future.
+## Why is the output designed for GitHub Pages and Nginx?
 
-## Is this vibecoded?
+The Emscripten build emits a static site layout with an `index.html` shell and adjacent asset files. That lets the project be hosted from GitHub Pages or any generic web server. The included Docker/Nginx configuration is just a self-hosted version of the same static deployment pattern.
 
-No. AI can't write a functional PC port by itself. There were many issues that
-current AI's aren't good enough to solve by themselves. AI was used as a tool to speed up
-development. The AI usage disclaimer is there for transparency.
+## Can I build the web client locally?
 
-## Why is the initial version one big commit?
+Yes. The project supports a local static build through Emscripten:
 
-This started out as a hobby project I had no intention of sharing with anyone, so my local repository contains assets from the game. 
-I made a new repository just to upload it to github. Sharing the original could result in this project getting taken down.
+```bash
+emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+cmake --build build-web --parallel
+```
+
+The generated files are under `build-web/web/` and can be served directly.
+
+## Can I run it with Docker?
+
+Yes. The repository includes a Dockerfile that compiles the web client and serves it via Nginx on Alpine:
+
+```bash
+docker build -t slider-web .
+docker run --rm -p 8080:80 slider-web
+```
+
+## Does it work on mobile?
+
+The browser build is intended to work on modern mobile browsers with WebGL2 support and touch input. Compatibility depends on the device/browser, but the web shell includes touch control support and mobile-friendly UI behaviors.
+
+## Is this the same as the native PC port?
+
+The web build shares the same game logic and asset handling, but the runtime is adapted for the browser environment. The native port is still a separate platform target, while the browser build is optimized for static hosting and in-browser execution.
+
+## Is the web build legal to host publicly?
+
+The project itself is a decompilation-based port, and the ROM data remains the user’s responsibility. The repository does not distribute the game assets. You must ensure that any ROM or save files you upload or load are from your own legal copy of the game.
+
+## Why is the project not distributed as a standalone desktop binary here?
+
+This repository is primarily focused on the browser port and static hosting workflow. The native desktop target still exists in the codebase, but the web-first deployment path is the main runtime being developed and documented here.
